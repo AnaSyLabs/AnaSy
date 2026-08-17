@@ -40,7 +40,24 @@ Lag is per group. ClickHouse falling behind does not block the other sink. Scale
 | Throw on write failure | At-least-once. Dedup handles the retry |
 | Do not share a consumer group across warehouses | That load-balances, it does not replicate |
 
-Poison records go to `{topic}.DLT` after three retries **in that sink**. Replay with the original key.
+## Retry, lag, and DLQ
+
+Backoff is **blocking** on the sink thread. That partition’s lag will grow during retries. That is intended: do not keep polling a dead warehouse.
+
+| Situation | What happens | What you do |
+|---|---|---|
+| Warehouse blip &lt; ~3 min | Exponential retry succeeds | Nothing |
+| Warehouse down longer | In-flight batches land on `{topic}.dlq.{sink}` | Fix warehouse, republish DLQ → original topic |
+| Missing `eventId` | Immediate DLQ, rest of batch writes | Fix the producer |
+| Two sinks, one down | Only that sink’s group lags / DLQs | The other sink is fine |
+
+Set `max.poll.interval.ms` (10 min) above `sum(backoff) + insert time`. Default 5 min will rebalance during a long backoff and look like a crash loop.
+
+Do not raise `max-attempts` into the tens. A partition that retries for an hour is an invisible outage. DLQ and replay are the operator path.
+
+DLQ depth is a per-sink metric. Alert on it. Replay with the original key; warehouse idempotency absorbs duplicates.
+
+Poison records go to `{topic}.dlq.{sink}` immediately. Transient failures go there after 8 exponential attempts.
 
 ## Idempotency (core)
 

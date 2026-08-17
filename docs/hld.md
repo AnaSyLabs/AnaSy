@@ -78,6 +78,20 @@ sequenceDiagram
 
 A sink that throws does not commit. Kafka redelivers to **that group only**. Other sinks are unaffected. Dedup is per sink, keyed by `eventId`.
 
+Transient warehouse failures retry with exponential backoff on that sink’s thread, then go to **that sink’s DLQ**. Poison records skip backoff.
+
+```mermaid
+flowchart TD
+  Poll[Poll batch] --> Split{Key present?}
+  Split -->|no| DLQ[DLQ immediately]
+  Split -->|yes| Write[Warehouse write]
+  Write -->|ok| Commit[Commit offsets]
+  Write -->|transient fail| Backoff[Exponential backoff]
+  Backoff -->|attempts left| Write
+  Backoff -->|exhausted| DLQ
+  DLQ --> Commit
+```
+
 ## Kafka contract
 
 This is the only schema ANASy owns. Warehouses map it however they like.
@@ -98,8 +112,9 @@ No envelope JSON. No ClickHouse column names in the producer. Producer generates
 |---|---|
 | OLTP → Kafka | Fire-and-forget with a failure callback. A send failure is logged, not dropped. |
 | Kafka → each sink | At-least-once per consumer group. Batch ack only after a successful write. |
-| Sink → warehouse | That sink’s problem. ClickHouse uses `ReplacingMergeTree`. Another sink uses a PK upsert. Same `eventId`. |
-| Poison records | Per-sink DLT after bounded retries. One bad warehouse does not stall the others. |
+| Sink → warehouse | Transient: exponential backoff (1s × 2, cap 60s, 8 attempts), then that sink’s DLQ. |
+| Poison records | Missing key / non-retryable → `{topic}.dlq.{sink}` immediately. Good rows in the same batch still write. |
+| DLQ replay | Republish to the original topic with the original `eventId`. Warehouse dedup absorbs duplicates. |
 
 No Kafka transactions in v1. Exactly-once across Kafka and a warehouse is not a core goal.
 

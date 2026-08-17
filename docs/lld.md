@@ -229,17 +229,7 @@ anas:
 
 ## Sink contract
 
-Every sink is a Spring Boot app with `spring-kafka`. Copy this loop; swap the write.
-
-```java
-@KafkaListener(topics = "${anas.sink.topics}", groupId = "${spring.kafka.consumer.group-id}")
-public void consume(List<ConsumerRecord<String, String>> records) {
-    if (records.isEmpty()) {
-        return;
-    }
-    warehouse.write(records); // must use rec.key() as eventId
-}
-```
+Every sink is a Spring Boot app with `spring-kafka`. Copy this loop; swap the write. Split poison keys before the write (see Retry and DLQ).
 
 Shared Kafka listener settings (destination-specific numbers live in the sink doc):
 
@@ -253,12 +243,15 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       enable-auto-commit: false
       max-poll-records: 10000
+      properties:
+        max.poll.interval.ms: 600000
     listener:
       type: batch
       ack-mode: batch
 
 anas:
   sink:
+    name: <warehouse>
     topics: orders.events,payments.events
 ```
 
@@ -267,21 +260,93 @@ Rules:
 | Rule | Detail |
 |---|---|
 | Unique `group-id` | `anas-sink-clickhouse`, `anas-sink-iceberg`, … Sharing a group splits the topic, it does not fan out |
-| Key is `eventId` | Null/blank key is poison. Throw. Do not mint a UUID |
+| Key is `eventId` | Null/blank key is poison. DLQ it. Do not mint a UUID |
 | Opaque value | Persist `record.value()` as JSON text unless the warehouse forces typed columns |
 | Ack after durable write | Throw on write failure so offsets do not move |
 | Dedup in the warehouse | PK / upsert / replace — on `eventId`. Not in a shared Java cache |
-| Own DLT | `DefaultErrorHandler` + `DeadLetterPublishingRecoverer`, three retries, `{topic}.DLT` |
+| Retry then DLQ | Exponential backoff on transient failures. Per-sink DLQ topic. See below |
+
+### Retry and DLQ
+
+Blocking backoff. Not `@RetryableTopic` (that is per-record and breaks batch inserts).
+
+```yaml
+spring:
+  kafka:
+    consumer:
+      properties:
+        max.poll.interval.ms: 600000   # > backoff budget + insert time
+
+anas:
+  sink:
+    name: clickhouse
+    topics: orders.events,payments.events
+    retry:
+      initial-interval: 1s
+      multiplier: 2.0
+      max-interval: 60s
+      max-attempts: 8
+    dlq:
+      suffix: .dlq.clickhouse   # orders.events → orders.events.dlq.clickhouse
+```
+
+Attempts: 1s, 2s, 4s, 8s, 16s, 32s, 60s, 60s ≈ 3 minutes, then DLQ. `max.poll.interval.ms` must exceed that plus the insert, or Kafka revokes the partition mid-retry.
 
 ```java
 @Bean
-public DefaultErrorHandler sinkErrorHandler(KafkaTemplate<String, String> template) {
-    DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template);
-    DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, new FixedBackOff(1000L, 3));
+public DeadLetterPublishingRecoverer dlqRecoverer(KafkaTemplate<String, String> template,
+                                                 EventSinkProperties props) {
+    return new DeadLetterPublishingRecoverer(template, (rec, ex) ->
+            new TopicPartition(rec.topic() + props.getDlq().getSuffix(), rec.partition()));
+}
+
+@Bean
+public DefaultErrorHandler sinkErrorHandler(DeadLetterPublishingRecoverer recoverer,
+                                           EventSinkProperties props) {
+    var retry = props.getRetry();
+    var backOff = new ExponentialBackOffWithMaxRetries(retry.getMaxAttempts() - 1);
+    backOff.setInitialInterval(retry.getInitialInterval().toMillis());
+    backOff.setMultiplier(retry.getMultiplier());
+    backOff.setMaxInterval(retry.getMaxInterval().toMillis());
+
+    var handler = new DefaultErrorHandler(recoverer, backOff);
     handler.setCommitRecovered(true);
+    handler.addNotRetryableExceptions(
+            PoisonEventException.class,
+            DeserializationException.class,
+            IllegalArgumentException.class);
     return handler;
 }
 ```
+
+`DeadLetterPublishingRecoverer` keeps the original key and adds `kafka_dlt-*` headers (exception, original topic/offset). Two sinks never share a suffix.
+
+**Poison vs transient.** A blank key will never insert. A ClickHouse timeout might. Split the batch so one poison record does not DLQ the rest:
+
+```java
+@KafkaListener(topics = "${anas.sink.topics}", groupId = "${spring.kafka.consumer.group-id}")
+public void consume(List<ConsumerRecord<String, String>> records) {
+    List<ConsumerRecord<String, String>> good = new ArrayList<>();
+    for (var rec : records) {
+        if (rec.key() == null || rec.key().isBlank()) {
+            dlqRecoverer.accept(rec, new PoisonEventException(
+                    "missing eventId topic=%s partition=%d offset=%d"
+                            .formatted(rec.topic(), rec.partition(), rec.offset())));
+            continue;
+        }
+        good.add(rec);
+    }
+    if (!good.isEmpty()) {
+        warehouse.write(good); // throw on transient failure → error handler retries the write
+    }
+}
+```
+
+`PoisonEventException` is not retryable. `warehouse.write` throwing `DataAccessException` (or similar) *is* retryable.
+
+**Replay.** Republish DLQ records to the original topic (`kafka_dlt-original-topic` header) with the same key. The sink’s normal path and warehouse dedup do the rest. Do not build a replay app in v1.
+
+Create DLQ topics with the same partition count as the source. Produce with the original partition index.
 
 ### Adding a second sink
 
@@ -299,4 +364,4 @@ Do not route through ClickHouse. Do not add `if (type == CLICKHOUSE)` in a share
 
 One check in the starter: `KafkaEventPublisher` writes a `ProducerRecord` whose key is the given `eventId` and whose value is JSON. Fail if a key is generated when an id was passed.
 
-Each sink adds one check: the write binds `event_id` from `record.key()`. A null key throws. ClickHouse’s check lives with that module.
+Each sink: write binds `event_id` from `record.key()`. A null key is sent to DLQ and does not prevent the rest of the batch from writing. ClickHouse’s check lives with that module.

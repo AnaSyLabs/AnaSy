@@ -35,7 +35,9 @@ No shared `sink-spi`, `SinkWriter`, or `anas.sink.type` switch. Kafka consumer g
 | `event_id` | Created in the producer, used as Kafka key | Every sink can idempotently upsert. Sink-generated UUIDs cannot |
 | Fan-out | One topic, N consumer groups | Native Kafka. Two sinks both see every event |
 | Sink shape | Separate Spring Boot app per destination | No common sink module until a second sink duplicates real code |
-| Ack | `listener.ack-mode: batch` after a successful write | Failed write → no commit → Kafka retry |
+| Ack | `listener.ack-mode: batch` after a successful write | Failed write → no commit |
+| Retry | Blocking `ExponentialBackOff` on the sink thread | Keeps the batch together. Pause that partition while the warehouse is sick |
+| DLQ | Kafka topic `{topic}.dlq.{sink-name}` | Per sink. Spring DLT, not a shared queue, not `@RetryableTopic` |
 | Schema Registry | Out of v1 | JSON payload does not need it |
 | Extra core modules (`common`, `spi`, `admin`) | No | YAGNI |
 
@@ -62,8 +64,30 @@ A sink is valid if it:
 3. Treats the value as an **opaque JSON string** unless that warehouse requires typed columns
 4. Writes **durably, then returns** so offsets commit
 5. Dedups on `event_id` using whatever the warehouse already has (PK, upsert, replace merge, `ON CONFLICT`)
+6. Retries **transient** warehouse failures with exponential backoff, then DLQ
+7. Sends **poison** (missing key, non-retryable) to that sink’s DLQ immediately, without stalling the good rows in the batch
 
 How ClickHouse, Iceberg, or a blob store implements (5) is that sink’s problem.
+
+## Retry and DLQ (locked)
+
+| Choice | Value | Why |
+|---|---|---|
+| Mechanism | `DefaultErrorHandler` + `DeadLetterPublishingRecoverer` | Spring Kafka already does this |
+| Backoff | `ExponentialBackOffWithMaxRetries`: 1s × 2, cap 60s, 8 attempts | ~3 min of retries, then give up. Not `FixedBackOff` |
+| Blocking vs retry-topics | Blocking | `@RetryableTopic` is per-record and shreds batch inserts |
+| Retryable | Warehouse I/O, timeouts, SQL/resource failures | Destination is down; wait |
+| Not retryable | Missing `eventId`, deserialization | Will never succeed. Immediate DLQ |
+| Poison in a batch | Split: DLQ the bad keys, write the rest | One blank key must not DLQ 10k good rows |
+| DLQ topic | `{topic}.dlq.{sink-name}` e.g. `orders.events.dlq.clickhouse` | Two sinks must not share a DLQ |
+| DLQ partition | Same index as the source record | Replay stays ordered per partition |
+| DLQ key | Original `eventId` | Idempotent replay |
+| After DLQ | `commitRecovered=true` | Do not loop the poison |
+| Replay | Republish to the **original** topic with the original key | Normal sink path + warehouse dedup. No replay service |
+| Producer | Kafka `retries` + idempotent producer only | DLQ is a sink concern |
+| `max.poll.interval.ms` | ≥ backoff budget + insert time (10 min) | Default 5 min can kick the consumer mid-backoff |
+
+Not infinite retry. A 10-minute warehouse outage DLQs the in-flight batches; replay after it is healthy. A partition that retries forever is a silent outage.
 
 ## Doc map
 

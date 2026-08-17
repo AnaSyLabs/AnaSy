@@ -31,10 +31,12 @@ package io.anasy.sink.clickhouse;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -47,18 +49,30 @@ public class ClickHouseSinkListener {
             """;
 
     private final JdbcTemplate jdbc;
+    private final DeadLetterPublishingRecoverer dlq;
 
-    public ClickHouseSinkListener(JdbcTemplate jdbc) {
+    public ClickHouseSinkListener(JdbcTemplate jdbc, DeadLetterPublishingRecoverer dlq) {
         this.jdbc = jdbc;
+        this.dlq = dlq;
     }
 
     @KafkaListener(topics = "${anas.sink.topics}", groupId = "${spring.kafka.consumer.group-id}")
     public void consume(List<ConsumerRecord<String, String>> records) {
-        if (records.isEmpty()) {
+        List<ConsumerRecord<String, String>> good = new ArrayList<>();
+        for (var rec : records) {
+            if (rec.key() == null || rec.key().isBlank()) {
+                dlq.accept(rec, new PoisonEventException(
+                        "missing eventId topic=%s partition=%d offset=%d"
+                                .formatted(rec.topic(), rec.partition(), rec.offset())));
+                continue;
+            }
+            good.add(rec);
+        }
+        if (good.isEmpty()) {
             return;
         }
-        jdbc.batchUpdate(INSERT, records, records.size(), (ps, rec) -> {
-            ps.setString(1, requireKey(rec));
+        jdbc.batchUpdate(INSERT, good, good.size(), (ps, rec) -> {
+            ps.setString(1, rec.key());
             ps.setString(2, rec.topic());
             ps.setInt(3, rec.partition());
             ps.setLong(4, rec.offset());
@@ -66,19 +80,10 @@ public class ClickHouseSinkListener {
             ps.setString(6, rec.value() == null ? "" : rec.value());
         });
     }
-
-    private static String requireKey(ConsumerRecord<String, String> rec) {
-        if (rec.key() == null || rec.key().isBlank()) {
-            throw new IllegalStateException(
-                    "missing eventId key topic=%s partition=%d offset=%d"
-                            .formatted(rec.topic(), rec.partition(), rec.offset()));
-        }
-        return rec.key();
-    }
 }
 ```
 
-`event_date` is `DEFAULT toDate(event_ts)`. `ingested_at` is `DEFAULT now()`. Neither is bound in JDBC.
+Poison keys go to DLQ via `DeadLetterPublishingRecoverer`; they never hit JDBC. `event_date` is `DEFAULT toDate(event_ts)`. `ingested_at` is `DEFAULT now()`. Neither is bound in JDBC.
 
 ## `application.yml`
 
@@ -96,6 +101,7 @@ spring:
       fetch-max-wait: 500ms
       properties:
         max.partition.fetch.bytes: 10485760
+        max.poll.interval.ms: 600000
     listener:
       type: batch
       ack-mode: batch
@@ -112,12 +118,20 @@ spring:
 
 anas:
   sink:
+    name: clickhouse
     topics: orders.events,payments.events
+    retry:
+      initial-interval: 1s
+      multiplier: 2.0
+      max-interval: 60s
+      max-attempts: 8
+    dlq:
+      suffix: .dlq.clickhouse
 ```
 
 `max-poll-records: 10000` is ClickHouse-healthy (10k–100k rows/insert). Drop it for large payloads. Hikari stays small; raise `listener.concurrency` only up to partition count, and watch `system.parts`.
 
-DLT: same `DefaultErrorHandler` as the core sink contract in the LLD.
+Retry/DLQ: same `DefaultErrorHandler` as the core sink contract in the LLD. This sink’s DLQ is `orders.events.dlq.clickhouse`, not a shared `.DLT`. ClickHouse timeouts are retryable; a missing Kafka key is not.
 
 ## Schema
 
@@ -215,4 +229,4 @@ ALTER TABLE anas.fat_events
 
 ## Test
 
-Listener binds `event_id` from `record.key()`, not `UUID.randomUUID()`. Null key throws.
+Listener binds `event_id` from `record.key()`, not `UUID.randomUUID()`. A null key is recovered to `*.dlq.clickhouse`; sibling records in the batch still insert.

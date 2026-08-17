@@ -13,6 +13,6 @@ Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/s
 - New warehouse = new app under `sinks/` with a unique `group-id`. No SPI.
 - `event_id` = Kafka key, created in the producer. Never `UUID.randomUUID()` in a sink.
 - Payload is opaque JSON to the starter. Do not parse it in core.
-- Failed writes must throw so that group does not commit offsets.
+- Failed writes must throw so that group does not commit offsets. Transient → exponential backoff then `{topic}.dlq.{sink}`. Poison (missing key) → immediate DLQ, rest of batch still writes. No `@RetryableTopic`. No shared DLQ.
 - Reuse `spring.kafka.*`. No parallel `anas.kafka` broker config.
 - ClickHouse JDBC, `ReplacingMergeTree`, and `fat_events` stay in the ClickHouse sink.
