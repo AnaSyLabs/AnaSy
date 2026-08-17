@@ -1,18 +1,18 @@
 ---
-description: ANASy architecture invariants. Two modules, producer-owned event_id, batched ClickHouse inserts.
+description: ANASy invariants. Kafka is the boundary. Sinks are independent consumers. ClickHouse is optional.
 alwaysApply: true
 ---
 
 # ANASy
 
-Fat events: OLTP → `EventPublisher` → Kafka → batch sink → ClickHouse `fat_events`.
+Fat events: OLTP → `EventPublisher` → Kafka → N sinks (one consumer group each).
 
-Locked decisions live in `docs/PLAN.md`. Implementation shape is `docs/lld.md`. Do not reopen them.
+Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/sinks/clickhouse.md`.
 
-- Modules: `event-connector-starter` and `clickhouse-batch-sink` only.
-- `event_id` = Kafka key, created in the producer. Never `UUID.randomUUID()` in the sink.
-- Store payload as raw JSON `String`. Do not parse it on ingest.
-- `JdbcTemplate.batchUpdate` at 10k–100k rows. No per-row inserts.
-- Dedup with `ReplacingMergeTree`, not `ALTER UPDATE`.
-- Failed inserts must throw so Kafka does not commit offsets.
-- Reuse `spring.kafka.*` / `spring.datasource.*`. No parallel `anas.kafka` broker config.
+- Core module is `event-connector-starter` only.
+- New warehouse = new app under `sinks/` with a unique `group-id`. No SPI.
+- `event_id` = Kafka key, created in the producer. Never `UUID.randomUUID()` in a sink.
+- Payload is opaque JSON to the starter. Do not parse it in core.
+- Failed writes must throw so that group does not commit offsets.
+- Reuse `spring.kafka.*`. No parallel `anas.kafka` broker config.
+- ClickHouse JDBC, `ReplacingMergeTree`, and `fat_events` stay in the ClickHouse sink.

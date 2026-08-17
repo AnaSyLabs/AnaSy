@@ -1,92 +1,91 @@
 # ANASy scaling
 
-Three knobs: Kafka partitions, ClickHouse batch size, and duplicate handling. Tune in that order.
+Tune Kafka first. Then tune each sink on its own. A ClickHouse batch size is not a Snowflake batch size.
 
-## Kafka partitions
+## Kafka partitions (core)
 
-Consumer parallelism equals `min(sink instances × listener.concurrency, partition count)`. Extra instances sit idle.
+Consumer parallelism **per sink group** equals `min(instances × listener.concurrency, partition count)`. Extra instances in that group sit idle. Other groups are unaffected.
 
 | Topic shape | Key | Partitions |
 |---|---|---|
-| One event per aggregate (order placed) | Aggregate id (`eventId` = order id) | Start at 12. Raise when a sink instance is CPU- or insert-bound |
+| One event per aggregate | Aggregate id (`eventId` = order id) | Start at 12. Raise when any sink is bound |
 | Many events per aggregate | `eventId` UUID | Same. Ordering across events is not guaranteed |
 
-Do not create 100 partitions “for later.” Each partition is a ClickHouse insert stream when concurrency is 1 per instance. More partitions + small polls = more tiny parts.
+Do not create 100 partitions “for later.” Every partition is extra fetch work for **every** sink group.
 
-Raise partitions before you add sink instances. Reuse the same `group-id` (`anas-clickhouse-sink`) so the group rebalances.
+Raise partitions before you add instances. Instances in the same sink reuse that sink’s `group-id`.
 
-Producer `enable.idempotence: true` and `acks: all` stop duplicate sends from broker retries. They do not stop duplicate *consumes*. That is ClickHouse’s job.
+Producer `enable.idempotence: true` and `acks: all` stop duplicate *sends*. They do not stop duplicate *consumes*. Each sink dedups with `eventId`.
 
-Fat payloads need larger fetch buffers (already in the sink YAML: `max.partition.fetch.bytes: 10MB`). If a single record exceeds that, the poll hangs — shrink the event or raise the cap.
+Fat payloads need `max.partition.fetch.bytes` large enough for one record. If a record exceeds it, the poll hangs — shrink the event or raise the cap. Set this on each sink; the starter does not consume.
 
-## ClickHouse batch tuning
+## Fan-out
 
-Each `INSERT` creates a part. Tiny parts melt the merge scheduler.
+Two warehouses ⇒ two groups, not two partitions.
 
-| Setting | Default in ANASy | Range |
-|---|---|---|
-| `spring.kafka.consumer.max-poll-records` | `10000` | Floor 1_000. Ideal 10_000–100_000 rows |
-| Rows per `batchUpdate` | Same as the poll | Do not split a poll into 100-row inserts |
-| Insert cadence | One insert per poll | Aim for about 1 insert/second/partition, not 1/row |
-| Hikari `maximum-pool-size` | `4` | Not a throughput lever |
-
-Fat JSON is large. 10k × 20 KB ≈ 200 MB per insert. If heap or ClickHouse insert time climbs, drop `max-poll-records` to 2_000–5_000 before you add concurrency.
-
-Do not enable ClickHouse `async_insert` while the sink already batches to 10k. Async insert is for clients that cannot batch. If a future producer writes tiny rows directly, set `async_insert=1` and `wait_for_async_insert=1` on that user — not on the sink user.
-
-Do not call `OPTIMIZE TABLE fat_events FINAL` from the sink. Merges run in the background.
-
-### Parts health
-
-```sql
-SELECT
-    partition,
-    count() AS parts,
-    sum(rows) AS rows,
-    formatReadableSize(sum(bytes_on_disk)) AS size
-FROM system.parts
-WHERE active AND database = 'anas' AND table = 'fat_events'
-GROUP BY partition
-ORDER BY partition;
+```
+orders.events
+  group anas-sink-clickhouse
+  group anas-sink-other
 ```
 
-Warning: thousands of active parts, or `parts_to_throw_insert` errors. Fix by larger batches or fewer concurrent inserters, not by more sink replicas.
+Lag is per group. ClickHouse falling behind does not block the other sink. Scale the slow group; leave the fast one alone.
 
-## Idempotency
+## Sink-agnostic write rules
 
-Kafka is at-least-once. The pipeline is idempotent at three layers. All three stay.
+| Rule | Why |
+|---|---|
+| One durable write per poll | Then return so offsets commit |
+| Batch if the warehouse wants batches | Do not write one row per record unless the destination is a log/blob that prefers that |
+| Throw on write failure | At-least-once. Dedup handles the retry |
+| Do not share a consumer group across warehouses | That load-balances, it does not replicate |
+
+Poison records go to `{topic}.DLT` after three retries **in that sink**. Replay with the original key.
+
+## Idempotency (core)
 
 ```mermaid
 flowchart LR
-  A[Producer eventId + idempotent producer] --> B[Commit offset only after INSERT]
-  B --> C["ReplacingMergeTree(ingested_at)"]
+  A[Producer eventId + idempotent producer] --> B[Per-sink: commit offset only after write]
+  B --> C[Per-sink warehouse dedup on eventId]
 ```
 
-1. **Producer.** `eventId` is the Kafka key, generated before `send`. Broker retries reuse the key. `enable.idempotence` covers produce duplicates.
-2. **Sink ack.** `ack-mode: batch` + throw on insert failure. Offsets move only after ClickHouse accepts the batch.
-3. **ClickHouse.** `ENGINE = ReplacingMergeTree(ingested_at) ORDER BY (topic, event_date, event_id)`. A redelivered record inserts again; the later `ingested_at` wins on merge.
+1. **Producer.** `eventId` is the Kafka key, generated before `send`.
+2. **Each sink.** `ack-mode: batch` + throw on write failure.
+3. **Each warehouse.** Upsert/replace on `eventId`. Mechanism is local (see that sink’s doc).
 
-The sink must not generate `event_id`. A new UUID per consume makes every retry a new row and the table grows forever.
+A sink must not generate `event_id`. A new UUID per consume makes every retry a new row in every warehouse.
 
-Queries that need a unique row use `FINAL` on a narrow key or `argMax(payload, ingested_at)`. Dashboards on large ranges should tolerate pre-merge duplicates or aggregate with `argMax`.
+## ClickHouse (this sink only)
 
-Poison records (null key, JDBC type failure) go to `{topic}.DLT` after three retries. That is not idempotency; it is liveness. Replay a DLT record only after the payload is fixed, with the original key intact.
+Details: [sinks/clickhouse.md](sinks/clickhouse.md).
+
+| Setting | Default | Range |
+|---|---|---|
+| `max-poll-records` | `10000` | Floor 1_000. Ideal 10_000–100_000 rows |
+| Rows per `batchUpdate` | Same as the poll | Do not split into 100-row inserts |
+| Hikari pool | `4` | Not a throughput lever |
+| `listener.concurrency` | 1–4 | Cap by partitions; watch `system.parts` |
+
+Each `INSERT` creates a part. Tiny parts melt merges. Do not `OPTIMIZE TABLE FINAL` from the sink. Do not turn on `async_insert` while the sink already batches.
+
+```sql
+SELECT partition, count() AS parts, sum(rows) AS rows
+FROM system.parts
+WHERE active AND database = 'anas' AND table = 'fat_events'
+GROUP BY partition;
+```
+
+Thousands of active parts: larger batches or fewer concurrent inserters, not more replicas.
+
+Dedup: `ReplacingMergeTree(ingested_at) ORDER BY (topic, event_date, event_id)`. Queries that need one row use `FINAL` or `argMax`.
 
 ## What not to add when it gets busy
 
 | Urge | Do this instead |
 |---|---|
-| More sink threads on one partition | More partitions, then more instances |
-| Single-row inserts to “reduce latency” | Keep batches; accept poll wait (`fetch-max-wait`) |
-| `ALTER TABLE UPDATE` to fix dupes | Let `ReplacingMergeTree` merge |
-| ClickHouse Kafka engine beside this sink | Pick one ingest path |
-| Parse JSON in the sink to “help CH” | Extract in SQL or add a materialized column |
-
-## Capacity sketch
-
-One sink instance, 12 partitions, 10k-record polls, 5 KB events:
-
-- Peak poll: ~50 MB in, one insert
-- Ceiling: ~12 inserts in flight if `concurrency=12` — too many parts. Keep `concurrency` at 2–4 until parts are stable, then raise.
-
-Measure `max-poll-records` × payload size × concurrency against ClickHouse insert time and `system.parts`. That loop is the scaling process. There is no other one.
+| A shared sink dispatcher | Another consumer group |
+| More threads on one partition | More partitions, then more instances in **that** group |
+| Single-row inserts to “reduce latency” | Keep batches; raise `fetch-max-wait` if needed |
+| Parse JSON in the starter to “help all sinks” | Let each warehouse extract |
+| Route sink B through ClickHouse | Consume Kafka again |

@@ -4,72 +4,83 @@ Locked choices for the framework. Write to these. Do not reopen them without a c
 
 ## What ANASy is
 
-ANASy (Analytics Sync) keeps OLTP services thin. A service writes its business row, builds a fat event (joins already resolved), and publishes it. Kafka buffers. A batch sink inserts raw JSON into ClickHouse. OLAP reads ClickHouse, not the OLTP database.
+ANASy (Analytics Sync) keeps OLTP services thin. A service writes its business row, builds a fat event (joins already resolved), and publishes it once to Kafka.
 
-Two modules. Nothing else in v1.
+Kafka is the product boundary. Sinks are independent Kafka consumers. ClickHouse is one sink, not the architecture.
 
-| Module | Artifact | Role |
+```
+OLTP  →  EventPublisher  →  Kafka  →  sink A (own group)
+                              └────→  sink B (own group)
+```
+
+## Modules
+
+| Module | Artifact | Layer |
 |---|---|---|
-| Producer starter | `event-connector-starter` | Auto-configured `EventPublisher` → Kafka |
-| Consumer app | `clickhouse-batch-sink` | Batch `@KafkaListener` → `JdbcTemplate.batchUpdate` |
+| Producer starter | `event-connector-starter` | Core. Required. |
+| ClickHouse sink | `clickhouse-batch-sink` | Optional reference sink under `sinks/` |
+| Next warehouse | `sinks/<name>` | New Spring Boot app. Own `group-id`. |
 
-## Locked decisions
+No shared `sink-spi`, `SinkWriter`, or `anas.sink.type` switch. Kafka consumer groups are the plugin system.
+
+## Locked (core — sink-agnostic)
 
 | Topic | Choice | Why |
 |---|---|---|
 | Group / packages | `io.anasy` | Matches the product name |
 | Java / Boot | Java 21, Spring Boot 3.4 | Current LTS + current Boot 3 |
-| Build | Maven parent `anas`, two modules | Starter convention; Gradle adds nothing |
+| Build | Maven parent `anas` | Starter convention |
 | Serialization | JSON via Jackson. Avro = swap `value-serializer` | No custom Avro stack |
-| Envelope | None. Kafka key = `eventId`, timestamp = event time, value = fat JSON | One less wrapper |
-| `event_id` | Generated in the producer, used as Kafka key | Sink-generated UUIDs break idempotency |
-| ClickHouse engine | `ReplacingMergeTree(ingested_at)` | Kafka is at-least-once; collapse dupes on merge |
-| Payload column | `String` (raw JSON text) | Schema evolves in OLAP, not in the sink. `JSONExtract*` for queries |
-| `ORDER BY` | `(topic, event_date, event_id)` | Low → high cardinality; matches `WHERE topic` + time range |
-| `PARTITION BY` | `toYYYYMM(event_date)` | Monthly lifecycle; ~12 partitions/year |
-| Insert path | Client-side batches of 10k–100k rows over official JDBC | ClickHouse part health. Async insert is a fallback, not the default |
-| Ack | Spring `listener.ack-mode: batch` after the listener returns | Failed insert → no commit → Kafka retry |
-| ClickHouse Kafka engine | Out of v1 | The sink *is* the consumer; a second ingest path is duplication |
-| Schema Registry | Out of v1 | JSON String payload does not need it |
-| Extra modules (`common`, `avro`, `admin`) | No | YAGNI |
+| Envelope | None. Kafka key = `eventId`, timestamp = event time, value = fat JSON | One less wrapper; sinks do not share a DTO |
+| `event_id` | Created in the producer, used as Kafka key | Every sink can idempotently upsert. Sink-generated UUIDs cannot |
+| Fan-out | One topic, N consumer groups | Native Kafka. Two sinks both see every event |
+| Sink shape | Separate Spring Boot app per destination | No common sink module until a second sink duplicates real code |
+| Ack | `listener.ack-mode: batch` after a successful write | Failed write → no commit → Kafka retry |
+| Schema Registry | Out of v1 | JSON payload does not need it |
+| Extra core modules (`common`, `spi`, `admin`) | No | YAGNI |
 
-## ClickHouse rules applied
+## Locked (ClickHouse sink only)
 
-- `schema-pk-plan-before-creation` — `ORDER BY` chosen from query patterns before `CREATE TABLE`
-- `schema-pk-cardinality-order` — `topic` (low) before `event_date` before `event_id` (high)
-- `schema-pk-prioritize-filters` — queries filter topic + time
-- `schema-types-native-types` / `schema-types-lowcardinality` — `UUID`, `DateTime`, `LowCardinality(String)` for `topic`
-- `schema-types-avoid-nullable` — defaults, not `Nullable`
-- `schema-json-when-to-use` — payload stays `String` because it is an opaque blob at ingest; extract in queries or promote hot paths later
-- `schema-partition-lifecycle` / `schema-partition-low-cardinality` — monthly partitions for TTL / `DROP PARTITION`
-- `insert-batch-size` — 10k–100k rows per `INSERT`
-- `insert-mutation-avoid-update` — `ReplacingMergeTree`, never `ALTER UPDATE` for dupes
-- `insert-optimize-avoid-final` — no `OPTIMIZE TABLE FINAL` in the sink
-- `query-mv-incremental` — raw table first; MVs only for repeated aggregations
+These bind `clickhouse-batch-sink`. They do not bind ANASy.
 
-## Query patterns the schema serves
+| Topic | Choice |
+|---|---|
+| Engine | `ReplacingMergeTree(ingested_at)` |
+| Payload | `String` (raw JSON) |
+| `ORDER BY` | `(topic, event_date, event_id)` |
+| `PARTITION BY` | `toYYYYMM(event_date)` |
+| Insert | JDBC `batchUpdate`, 10k–100k rows |
 
-1. `WHERE topic = ? AND event_date BETWEEN ? AND ?` — primary
-2. JSON field extract on recent topic slices — secondary
-3. Point lookup by `event_id` — rare; allowed, not optimized
+ClickHouse rules and query patterns live in [sinks/clickhouse.md](sinks/clickhouse.md).
+
+## Sink contract (every destination)
+
+A sink is valid if it:
+
+1. Uses a **unique consumer `group-id`**
+2. Reads `eventId` from the Kafka **key** (never generates one)
+3. Treats the value as an **opaque JSON string** unless that warehouse requires typed columns
+4. Writes **durably, then returns** so offsets commit
+5. Dedups on `event_id` using whatever the warehouse already has (PK, upsert, replace merge, `ON CONFLICT`)
+
+How ClickHouse, Iceberg, or a blob store implements (5) is that sink’s problem.
 
 ## Doc map
 
-| File | Audience | Contents |
-|---|---|---|
-| [hld.md](hld.md) | Anyone joining | Context, containers, Mermaid, data flow, what is not in v1 |
-| [lld.md](lld.md) | Implementers | Modules, auto-config, publisher API, sink, `application.yml`, schema, extract queries |
-| [scaling.md](scaling.md) | Operators | Kafka partitions, batch tuning, idempotency, parts monitoring |
-| [schema.sql](schema.sql) | ClickHouse | Runnable DDL |
-| [../AGENTS.md](../AGENTS.md) | Agents | Ponytail ladder + ANASy constraints |
-| [../README.md](../README.md) | Humans | Short index |
+| File | Contents |
+|---|---|
+| [hld.md](hld.md) | Architecture, fan-out, Kafka contract |
+| [lld.md](lld.md) | Starter, publisher API, how to add a sink |
+| [scaling.md](scaling.md) | Partitions, groups, per-sink tuning |
+| [sinks/clickhouse.md](sinks/clickhouse.md) | Reference sink: config, code, DDL, queries |
+| [sinks/clickhouse.sql](sinks/clickhouse.sql) | ClickHouse DDL |
+| [../AGENTS.md](../AGENTS.md) | Ponytail + ANASy constraints |
 
 No ADR folder. This file is the decision log.
 
 ## v1 non-goals
 
-- Exactly-once (Kafka transactions + CH is not worth it; at-least-once + replace is)
-- ClickHouse Cloud-specific APIs
-- Multi-tenant row filters
-- Admin UI, metrics dashboards, schema registry
-- Parsing JSON in the sink before insert
+- A sink SPI or multi-writer process
+- Exactly-once (Kafka transactions + warehouse)
+- Parsing JSON in the core (the starter does not know the warehouse)
+- Schema Registry, outbox, admin UI

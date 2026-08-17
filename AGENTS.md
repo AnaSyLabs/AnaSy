@@ -34,23 +34,21 @@ Non-trivial logic leaves one runnable check behind — the smallest thing that f
 
 ## ANASy
 
-Analytics Sync. Fat events leave OLTP via Kafka and land as raw JSON in ClickHouse.
+Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse is one sink.
 
-Docs: `docs/PLAN.md` (locked decisions), `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/schema.sql`.
+Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sinks/clickhouse.md`.
 
 ### Invariants
 
-- Two modules only: `event-connector-starter`, `clickhouse-batch-sink`. No `common`.
+- Core module: `event-connector-starter` only. Sinks live under `sinks/` and do not depend on each other.
+- No `sink-spi`, no shared writer interface, no `anas.sink.type`. Fan-out is a new Kafka `group-id`.
 - Producer API is `EventPublisher`. Do not wrap it.
-- `event_id` is the Kafka key, created in the producer. The sink never calls `UUID.randomUUID()`.
-- Payload is stored as `String`. Do not parse JSON in the sink.
-- Inserts are batches of 10k–100k rows. No per-row `INSERT`.
-- Dedup is `ReplacingMergeTree(ingested_at) ORDER BY (topic, event_date, event_id)`. Do not `ALTER UPDATE`.
-- `ORDER BY` is immutable. Do not “fix” it with a mutation.
-- Reuse `spring.kafka.*` and `spring.datasource.*`. Do not invent a parallel config tree.
-- Failed ClickHouse inserts must fail the listener so offsets are not committed.
-- Do not add Schema Registry, ClickHouse Kafka engine, an outbox, or a third module unless a human asks.
+- `event_id` is the Kafka key, created in the producer. Sinks never call `UUID.randomUUID()`.
+- The starter does not know ClickHouse. ClickHouse DDL, JDBC, and `ReplacingMergeTree` stay in `sinks/clickhouse-batch-sink`.
+- Failed warehouse writes must fail the listener so that group’s offsets are not committed.
+- Reuse `spring.kafka.*`. Do not invent a parallel broker config tree.
+- Do not add Schema Registry, an outbox, or a common module unless a human asks.
 
 ### When implementing
 
-Follow `docs/lld.md`. If a change fights `docs/PLAN.md`, stop and say so. Do not silently reopen a locked decision.
+Follow `docs/lld.md` for core. Follow `docs/sinks/clickhouse.md` only when touching that sink. If a change fights `docs/PLAN.md`, stop and say so.

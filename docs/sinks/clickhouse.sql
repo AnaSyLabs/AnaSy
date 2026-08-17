@@ -1,5 +1,5 @@
--- ANASy ClickHouse schema. Database: anas. Table: fat_events.
--- See docs/lld.md for column rationale. ORDER BY is immutable.
+-- ClickHouse sink only. Not an ANASy core schema.
+-- See docs/sinks/clickhouse.md. ORDER BY is immutable.
 
 CREATE DATABASE IF NOT EXISTS anas;
 

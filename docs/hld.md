@@ -1,14 +1,14 @@
 # ANASy high-level design
 
-ANASy (Analytics Sync) offloads fat analytical events from OLTP services onto Kafka, then batch-inserts them into ClickHouse. OLTP stays a write path. Reporting reads ClickHouse.
+ANASy (Analytics Sync) offloads fat analytical events from OLTP onto Kafka. Reporting systems consume from Kafka. The warehouse is not part of the core.
 
-Decisions: [PLAN.md](PLAN.md). Implementation: [lld.md](lld.md). Operations: [scaling.md](scaling.md).
+Decisions: [PLAN.md](PLAN.md). Core implementation: [lld.md](lld.md). One warehouse: [sinks/clickhouse.md](sinks/clickhouse.md).
 
 ## Problem
 
-OLTP services that join five tables to serve a dashboard become slow and coupled to reporting. Fat events — the business row plus every join reporting needs — belong on an OLAP sink, not in the request path.
+OLTP services that join five tables to serve a dashboard become slow and coupled to reporting. Fat events — the business row plus every join reporting needs — belong on a bus, not in the request path.
 
-ANASy is that pipe. It is not a general event bus, not a CDC tool, and not a query layer.
+ANASy is that pipe: a producer starter and a Kafka contract. It is not a warehouse, not CDC, and not a query layer.
 
 ## Containers
 
@@ -23,31 +23,33 @@ flowchart LR
     EP[EventPublisher]
   end
 
-  Kafka[(Kafka topic)]
+  Kafka[(Kafka)]
 
-  subgraph sink ["clickhouse-batch-sink"]
-    Listener["@KafkaListener batch"]
-    JDBC["JdbcTemplate.batchUpdate"]
+  subgraph sinks [Sinks — one consumer group each]
+    CH[clickhouse-batch-sink]
+    Other[other warehouse…]
   end
 
-  CH[(ClickHouse fat_events)]
-  OLAP[OLAP / reporting]
+  CHDB[(ClickHouse)]
+  OtherDB[(Other OLAP)]
 
   Orders --> EP
   Payments --> EP
-  EP -->|JSON key=eventId| Kafka
-  Kafka --> Listener
-  Listener --> JDBC
-  JDBC --> CH
-  OLAP --> CH
+  EP -->|key=eventId value=JSON| Kafka
+  Kafka --> CH
+  Kafka --> Other
+  CH --> CHDB
+  Other --> OtherDB
 ```
 
-| Container | What it does | What it does not do |
-|---|---|---|
-| `event-connector-starter` | One bean: serialize and send | Retry beyond Kafka producer retries, schema validation, outbox |
-| Kafka | Durable buffer, replay, fan-out | Transform payloads |
-| `clickhouse-batch-sink` | Poll batches, insert rows, commit offsets | Parse JSON into columns, serve queries |
-| ClickHouse `fat_events` | Store raw JSON, collapse duplicate `event_id`s | Act as the OLTP source of truth |
+| Container | Layer | What it does | What it does not do |
+|---|---|---|---|
+| `event-connector-starter` | Core | Serialize and send | Know destinations |
+| Kafka | Core | Buffer, replay, fan-out | Transform payloads |
+| `clickhouse-batch-sink` | Sink | Batch-insert into ClickHouse | Speak for other warehouses |
+| Next sink | Sink | Same contract, own `group-id` | Share a process or SPI with ClickHouse |
+
+Two sinks on the same topic both receive every event because they use different consumer groups. That is the whole fan-out design.
 
 ## Sequence
 
@@ -56,46 +58,50 @@ sequenceDiagram
   participant S as OLTP service
   participant P as EventPublisher
   participant K as Kafka
-  participant C as clickhouse-batch-sink
-  participant CH as ClickHouse
+  participant A as sink A
+  participant B as sink B
 
   S->>S: persist business row
-  S->>S: build fat event (joins resolved)
+  S->>S: build fat event
   S->>P: publish(topic, eventId, payload)
   P->>K: ProducerRecord(key=eventId, value=JSON)
-  Note over K: at-least-once delivery
-  K->>C: poll up to max-poll-records
-  C->>CH: INSERT batch 10k–100k rows
-  CH-->>C: ok
-  C->>K: commit offsets
+  par independent consumers
+    K->>A: poll batch
+    A->>A: durable write
+    A->>K: commit offsets (group A)
+  and
+    K->>B: poll batch
+    B->>B: durable write
+    B->>K: commit offsets (group B)
+  end
 ```
 
-If the insert throws, the listener does not return, offsets are not committed, and Kafka redelivers. `ReplacingMergeTree` collapses the duplicate `event_id`.
+A sink that throws does not commit. Kafka redelivers to **that group only**. Other sinks are unaffected. Dedup is per sink, keyed by `eventId`.
 
-## Fat event contract
+## Kafka contract
 
-The value is the fat JSON as the service already built it. ANASy does not wrap it.
+This is the only schema ANASy owns. Warehouses map it however they like.
 
-| Kafka field | Source | Stored as |
+| Kafka field | Source | Meaning |
 |---|---|---|
-| Key | Producer `eventId` (UUID string) | `event_id UUID` |
-| Timestamp | Producer `CreateTime` | `event_ts DateTime`, `event_date Date` |
-| Topic / partition / offset | Broker | `topic`, `kafka_partition`, `kafka_offset` |
-| Value | Fat JSON | `payload String` |
-| — | Sink clock | `ingested_at DateTime` (version column) |
+| Key | Producer `eventId` | Stable id. Idempotency key for every sink |
+| Timestamp | Producer `CreateTime` | Event time |
+| Topic | Caller | Stream name (`orders.events`) |
+| Partition / offset | Broker | Replay / debug. Not the idempotency key |
+| Value | Fat JSON | Opaque to the starter. Opaque to sinks unless they must type it |
 
-Producer generates `eventId` before `send`. The sink never calls `UUID.randomUUID()`.
+No envelope JSON. No ClickHouse column names in the producer. Producer generates `eventId` before `send`. Sinks never call `UUID.randomUUID()`.
 
 ## Trust and failure
 
 | Boundary | Rule |
 |---|---|
-| OLTP → Kafka | Fire-and-forget with a failure callback. A send failure is logged; it is not silently dropped. |
-| Kafka → sink | At-least-once. Batch ack only after a successful insert. |
-| Sink → ClickHouse | One `INSERT` per poll. Poison batches go to a DLT after bounded retries so a partition does not stall forever. |
-| ClickHouse queries | Reporting uses `FINAL` or `argMax` when uniqueness matters. Background merges do the rest. |
+| OLTP → Kafka | Fire-and-forget with a failure callback. A send failure is logged, not dropped. |
+| Kafka → each sink | At-least-once per consumer group. Batch ack only after a successful write. |
+| Sink → warehouse | That sink’s problem. ClickHouse uses `ReplacingMergeTree`. Another sink uses a PK upsert. Same `eventId`. |
+| Poison records | Per-sink DLT after bounded retries. One bad warehouse does not stall the others. |
 
-No Kafka transactions in v1. Exactly-once across Kafka and ClickHouse is not a v1 goal.
+No Kafka transactions in v1. Exactly-once across Kafka and a warehouse is not a core goal.
 
 ## What lives where
 
@@ -106,7 +112,7 @@ flowchart TB
     API[Request/response]
   end
 
-  subgraph move [Move to ANASy]
+  subgraph move [Publish once to ANASy]
     FAT[Joined reporting snapshots]
     HIST[High-volume event history]
   end
@@ -119,10 +125,10 @@ flowchart TB
 
 ## Scale sketch
 
-Horizontal scale is Kafka partitions. One sink instance maps to one or more partitions. ClickHouse scale is batch size and part count, not more sink threads writing single rows.
+Horizontal scale is Kafka partitions. Each sink group scales on its own: instances × concurrency, capped by partition count. Warehouse tuning stays in that sink’s doc.
 
 Details: [scaling.md](scaling.md).
 
 ## v1 non-goals
 
-ClickHouse Kafka table engine, Schema Registry, an outbox starter, Avro codegen, multi-tenant row filters, an admin UI.
+Sink SPI, multi-writer process, Schema Registry, outbox starter, Avro codegen, admin UI.
