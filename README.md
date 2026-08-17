@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="ANASy Labs — Data · Sync · Scale" width="400" />
+</p>
+
 # ANASy
 
 Analytics Sync. Keep OLTP thin: publish fat events once to Kafka. Any number of sinks consume them.

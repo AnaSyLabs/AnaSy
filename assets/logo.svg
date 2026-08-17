@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 150" width="100%" height="100%">
+  <defs>
+    <!-- Glowing Space-Tech Gradients -->
+    <linearGradient id="neonBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F0FF" />
+      <stop offset="100%" stop-color="#0057FF" />
+    </linearGradient>
+    <linearGradient id="neonPurple" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8A2BE2" />
+      <stop offset="100%" stop-color="#FF007F" />
+    </linearGradient>
+    
+    <!-- Glassmorphism Blur Filter -->
+    <filter id="glassBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background (Optional, to show glass effect) -->
+  <rect width="400" height="150" fill="#0A0F1A" rx="16" />
+
+  <!-- Logo Mark (Abstract 'A' and 'S' Intersecting) -->
+  <g transform="translate(30, 25)">
+    <!-- Back glowing orb -->
+    <circle cx="50" cy="50" r="35" fill="url(#neonPurple)" opacity="0.6" filter="url(#glassBlur)" />
+    <!-- Front geometric crystal/glass shape -->
+    <path d="M50 10 L85 80 L15 80 Z" fill="url(#neonBlue)" opacity="0.85" />
+    <path d="M50 90 L85 20 L15 20 Z" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-opacity="0.5" />
+  </g>
+
+  <!-- Typography -->
+  <text x="140" y="85" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="800" fill="#FFFFFF" letter-spacing="2">
+    AnaSy<tspan fill="url(#neonBlue)">Labs</tspan>
+  </text>
+  <text x="144" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="500" fill="#8B9BBD" letter-spacing="6" text-transform="uppercase">
+    Data • Sync • Scale
+  </text>
+</svg>
