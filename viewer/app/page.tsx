@@ -161,13 +161,6 @@ export default function Home() {
           </button>
         </div>
       </div>
-
-      <nav className="dock">
-        <button className="on" title="Home">⌂</button>
-        <button title="Kafka" onClick={() => setStore("kafka")}>⌁</button>
-        <button title="ClickHouse" onClick={() => setStore("clickhouse")}>▣</button>
-        <button title="DuckDB" onClick={() => setStore("duckdb")}>▦</button>
-      </nav>
     </div>
   );
 }
