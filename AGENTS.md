@@ -36,7 +36,7 @@ Non-trivial logic leaves one runnable check behind — the smallest thing that f
 
 Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse and DuckDB are two sinks. `viewer/` is a demo dashboard.
 
-Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sinks/clickhouse.md`, `docs/sinks/duckdb.md`.
+Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/medallion.md`, `docs/sinks/clickhouse.md`, `docs/sinks/duckdb.md`.
 
 ### Invariants
 

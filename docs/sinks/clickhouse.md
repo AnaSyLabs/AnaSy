@@ -179,7 +179,7 @@ Replacement key is the `ORDER BY` tuple. Kafka redelivery keeps the original rec
 
 TTL 13 months. Drop old data with `DROP PARTITION`, not `ALTER DELETE`.
 
-Payload stays `String`, not ClickHouse `JSON`. Promote hot paths with a materialized column when a field is actually queried constantly.
+Payload stays `String`, not ClickHouse `JSON`. Promote hot paths with a materialized column when a field is actually queried constantly. That is the first silver step; see [../medallion.md](../medallion.md).
 
 Rules applied here (ClickHouse sink only): `schema-pk-plan-before-creation`, `schema-pk-cardinality-order`, `schema-pk-prioritize-filters`, `schema-types-native-types`, `schema-types-lowcardinality`, `schema-types-avoid-nullable`, `schema-json-when-to-use`, `schema-partition-lifecycle`, `insert-batch-size`, `insert-mutation-avoid-update`, `insert-optimize-avoid-final`.
 

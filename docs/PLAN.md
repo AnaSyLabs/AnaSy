@@ -111,7 +111,7 @@ Not infinite retry. A 10-minute warehouse outage DLQs the in-flight batches; rep
 |---|---|
 | [hld.md](hld.md) | Architecture, fan-out, Kafka contract |
 | [lld.md](lld.md) | Starter, publisher API, how to add a sink |
-| [scaling.md](scaling.md) | Partitions, groups, per-sink tuning |
+| [medallion.md](medallion.md) | Bronze (have) → silver/gold plan. ClickHouse modeling only |
 | [sinks/clickhouse.md](sinks/clickhouse.md) | ClickHouse sink: config, code, DDL, queries |
 | [sinks/clickhouse.sql](sinks/clickhouse.sql) | ClickHouse DDL |
 | [sinks/duckdb.md](sinks/duckdb.md) | DuckDB sink: file store, PK upsert, query port |

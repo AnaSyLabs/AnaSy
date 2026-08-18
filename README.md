@@ -34,6 +34,7 @@ Java 21, Spring Boot 3.4, Maven. Group `io.anasy`. Viewer is Next.js.
 | [docs/hld.md](docs/hld.md) | Architecture, fan-out |
 | [docs/lld.md](docs/lld.md) | Starter, publisher, how to add a sink |
 | [docs/scaling.md](docs/scaling.md) | Partitions, groups, per-sink tuning |
+| [docs/medallion.md](docs/medallion.md) | Bronze now; silver/gold when a query is hot |
 | [docs/sinks/clickhouse.md](docs/sinks/clickhouse.md) | ClickHouse config, schema, queries |
 | [docs/sinks/duckdb.md](docs/sinks/duckdb.md) | DuckDB file store, PK upsert |
 | [AGENTS.md](AGENTS.md) | Agent rules |
