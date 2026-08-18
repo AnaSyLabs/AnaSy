@@ -1,0 +1,42 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: duckdb-batch-sink
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: anas-sink-duckdb
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      max-poll-records: 10000
+      properties:
+        max.poll.interval.ms: 600000
+    listener:
+      type: batch
+      ack-mode: batch
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  datasource:
+    url: jdbc:duckdb:./data/anas.duckdb
+    driver-class-name: org.duckdb.DuckDBDriver
+    hikari:
+      maximum-pool-size: 1
+      connection-timeout: 10000
+
+anas:
+  sink:
+    name: duckdb
+    topics: orders.events,payments.events
+    retry:
+      initial-interval: 1s
+      multiplier: 2.0
+      max-interval: 60s
+      max-attempts: 8
+    dlq:
+      suffix: .dlq.duckdb

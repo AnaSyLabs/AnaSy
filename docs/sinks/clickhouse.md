@@ -18,9 +18,13 @@ Add ClickHouse next to Kafka (Kafka compose stays in the LLD):
   clickhouse:
     image: clickhouse/clickhouse-server:24.12
     ports: ["8123:8123", "9000:9000"]
+    environment:
+      CLICKHOUSE_DB: anas
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: anas
 ```
 
-Apply [clickhouse.sql](clickhouse.sql).
+Apply [clickhouse.sql](clickhouse.sql). Overlay compose: `sinks/clickhouse-batch-sink/docker-compose.yml`. Full stack including DuckDB and the viewer: `examples/docker-compose.yml`.
 
 ## Listener
 
@@ -96,6 +100,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       enable-auto-commit: false
+      auto-offset-reset: earliest
       max-poll-records: 10000
       fetch-min-size: 1MB
       fetch-max-wait: 500ms
@@ -111,6 +116,8 @@ spring:
 
   datasource:
     url: jdbc:clickhouse:http://localhost:8123/anas
+    username: default
+    password: anas
     driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
     hikari:
       maximum-pool-size: 4

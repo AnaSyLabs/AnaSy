@@ -20,11 +20,28 @@
 
     <modules>
         <module>event-connector-starter</module>
+        <module>examples/starter-example</module>
         <module>sinks/clickhouse-batch-sink</module>
+        <module>sinks/duckdb-batch-sink</module>
     </modules>
 
     <properties>
         <java.version>21</java.version>
         <clickhouse-jdbc.version>0.9.8</clickhouse-jdbc.version>
+        <duckdb-jdbc.version>1.4.4.0</duckdb-jdbc.version>
     </properties>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <skip>true</skip>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>

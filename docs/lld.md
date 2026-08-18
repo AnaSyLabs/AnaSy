@@ -3,6 +3,7 @@
 Core only: the starter and the Kafka contract. Implements [hld.md](hld.md). Decisions in [PLAN.md](PLAN.md).
 
 ClickHouse is a sink, not this file: [sinks/clickhouse.md](sinks/clickhouse.md).
+DuckDB is a sink, not this file: [sinks/duckdb.md](sinks/duckdb.md).
 
 ## Module structure
 
@@ -10,24 +11,19 @@ ClickHouse is a sink, not this file: [sinks/clickhouse.md](sinks/clickhouse.md).
 anas/
 ├── pom.xml
 ├── event-connector-starter/          # core
-│   ├── pom.xml
-│   └── src/main/
-│       ├── java/io/anasy/connector/
-│       │   ├── EventPublisher.java
-│       │   ├── KafkaEventPublisher.java
-│       │   ├── EventConnectorAutoConfiguration.java
-│       │   └── EventPublisherProperties.java
-│       └── resources/META-INF/spring/
-│           └── org.springframework.boot.autoconfigure.AutoConfiguration.imports
-└── sinks/
-    └── clickhouse-batch-sink/        # reference warehouse, optional
-        ├── pom.xml
-        └── src/main/java/io/anasy/sink/clickhouse/
+│   └── src/main/java/io/anasy/connector/
+├── examples/
+│   ├── docker-compose.yml            # full local stack
+│   └── starter-example/              # sample OLTP
+├── sinks/
+│   ├── clickhouse-batch-sink/
+│   └── duckdb-batch-sink/
+└── viewer/                           # Next.js demo dashboard
 ```
 
-Parent `io.anasy:anas`. Modules depend on Boot, not on each other. A new sink is a sibling under `sinks/`. It does not depend on `clickhouse-batch-sink`. Do not add `sink-spi` when the second sink appears — copy the listener loop first; extract a helper only if the third copy hurts.
+Parent `io.anasy:anas`. Modules depend on Boot, not on each other. A new sink is a sibling under `sinks/`. It does not depend on `clickhouse-batch-sink` or `duckdb-batch-sink`. The DuckDB sink copied the ClickHouse listener loop. Do not add `sink-spi` — extract a helper only if the third copy hurts.
 
-OLTP services depend only on `event-connector-starter`.
+OLTP services depend only on `event-connector-starter`. The viewer is not on the publish path.
 
 ## Setup
 
@@ -41,7 +37,9 @@ services:
     ports: ["9092:9092"]
 ```
 
-Warehouse containers belong in that sink’s compose overlay. ClickHouse: [sinks/clickhouse.md](sinks/clickhouse.md).
+Warehouse containers belong in that sink’s compose overlay, or use the full stack: `examples/docker-compose.yml`.
+
+ClickHouse: [sinks/clickhouse.md](sinks/clickhouse.md). DuckDB: [sinks/duckdb.md](sinks/duckdb.md).
 
 ```bash
 kafka-topics.sh --bootstrap-server localhost:9092 \
@@ -401,4 +399,4 @@ Do not route through ClickHouse. Do not add `if (type == CLICKHOUSE)` in a share
 
 One check in the starter: `KafkaEventPublisher` writes a `ProducerRecord` whose key is the given `eventId` and whose value is JSON. Fail if a key is generated when an id was passed. Same key/value for `publish` and `publishAndWait`. Blocking path throws when `send` fails.
 
-Each sink: write binds `event_id` from `record.key()`. A null key is sent to DLQ and does not prevent the rest of the batch from writing. ClickHouse’s check lives with that module.
+Each sink: write binds `event_id` from `record.key()`. A null key is sent to DLQ and does not prevent the rest of the batch from writing. ClickHouse’s check and DuckDB’s check live with those modules.

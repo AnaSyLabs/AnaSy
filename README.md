@@ -8,19 +8,23 @@ Analytics Sync. Keep OLTP thin: publish fat events once to Kafka. Any number of 
 
 ```
 OLTP  --EventPublisher-->  Kafka  --group A-->  ClickHouse
-                           └────  --group B-->  other warehouse
+                           └────  --group B-->  DuckDB
+                                    viewer  (look up event_id)
 ```
 
-Kafka is the product boundary. ClickHouse is a reference sink, not the architecture.
+Kafka is the product boundary. ClickHouse and DuckDB are reference sinks, not the architecture.
 
 ## Modules
 
 | Module | Layer |
 |---|---|
 | `event-connector-starter` | Core. Inject `EventPublisher`. |
+| `examples/starter-example` | Sample OLTP app. Copy this pom. |
 | `sinks/clickhouse-batch-sink` | Optional. Batch JDBC into ClickHouse. |
+| `sinks/duckdb-batch-sink` | Optional. Upsert into a DuckDB file. |
+| `viewer/` | Demo dashboard. Where is this event. |
 
-Java 21, Spring Boot 3.4, Maven. Group `io.anasy`.
+Java 21, Spring Boot 3.4, Maven. Group `io.anasy`. Viewer is Next.js.
 
 ## Docs
 
@@ -31,15 +35,29 @@ Java 21, Spring Boot 3.4, Maven. Group `io.anasy`.
 | [docs/lld.md](docs/lld.md) | Starter, publisher, how to add a sink |
 | [docs/scaling.md](docs/scaling.md) | Partitions, groups, per-sink tuning |
 | [docs/sinks/clickhouse.md](docs/sinks/clickhouse.md) | ClickHouse config, schema, queries |
+| [docs/sinks/duckdb.md](docs/sinks/duckdb.md) | DuckDB file store, PK upsert |
 | [AGENTS.md](AGENTS.md) | Agent rules |
 
 ## Quick path
 
-1. Run Kafka. Depend on `event-connector-starter`.
-2. Publish (non-blocking). Use `publishAndWait` when the caller must see the broker ack:
+Full stack (Kafka, ClickHouse, both sinks, sample OLTP, viewer):
+
+```bash
+docker compose -f examples/docker-compose.yml up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000). Publish from the viewer, or:
+
+```bash
+curl -s -X POST http://localhost:8080/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"customerName":"Ada","totalAmount":42.5}'
+```
+
+Host-only Kafka (no warehouses): `docker compose up -d` at the repo root.
+
+OLTP usage — persist, then publish. `publishAndWait` when the caller must see the broker ack:
 
 ```java
 events.publish("orders.events", order.id().toString(), fatEvent);
 ```
-
-3. Add a sink: new app, unique `group-id`, write `record.key()` as `eventId`. ClickHouse: apply `docs/sinks/clickhouse.sql` and run `clickhouse-batch-sink`.

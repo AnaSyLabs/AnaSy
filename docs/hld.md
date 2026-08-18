@@ -2,7 +2,7 @@
 
 ANASy (Analytics Sync) offloads fat analytical events from OLTP onto Kafka. Reporting systems consume from Kafka. The warehouse is not part of the core.
 
-Decisions: [PLAN.md](PLAN.md). Core implementation: [lld.md](lld.md). One warehouse: [sinks/clickhouse.md](sinks/clickhouse.md).
+Decisions: [PLAN.md](PLAN.md). Core implementation: [lld.md](lld.md). Warehouses: [sinks/clickhouse.md](sinks/clickhouse.md), [sinks/duckdb.md](sinks/duckdb.md).
 
 ## Problem
 
@@ -27,27 +27,33 @@ flowchart LR
 
   subgraph sinks [Sinks — one consumer group each]
     CH[clickhouse-batch-sink]
-    Other[other warehouse…]
+    DD[duckdb-batch-sink]
   end
 
   CHDB[(ClickHouse)]
-  OtherDB[(Other OLAP)]
+  DDB[(DuckDB file)]
+  Viewer[viewer]
 
   Orders --> EP
   Payments --> EP
   EP -->|key=eventId value=JSON| Kafka
   Kafka --> CH
-  Kafka --> Other
+  Kafka --> DD
   CH --> CHDB
-  Other --> OtherDB
+  DD --> DDB
+  CHDB --> Viewer
+  DDB --> Viewer
+  Kafka --> Viewer
 ```
 
 | Container | Layer | What it does | What it does not do |
 |---|---|---|---|
 | `event-connector-starter` | Core | Serialize and send | Know destinations |
 | Kafka | Core | Buffer, replay, fan-out | Transform payloads |
-| `clickhouse-batch-sink` | Sink | Batch-insert into ClickHouse | Speak for other warehouses |
-| Next sink | Sink | Same contract, own `group-id` | Share a process or SPI with ClickHouse |
+| `clickhouse-batch-sink` | Sink | Batch-insert into ClickHouse | Speak for DuckDB |
+| `duckdb-batch-sink` | Sink | Upsert into a DuckDB file | Speak for ClickHouse |
+| `viewer/` | Demo UI | Show where an `event_id` is | Not a warehouse, not a control plane |
+| Next sink | Sink | Same contract, own `group-id` | Share a process or SPI |
 
 Two sinks on the same topic both receive every event because they use different consumer groups. That is the whole fan-out design.
 
@@ -147,4 +153,4 @@ Details: [scaling.md](scaling.md).
 
 ## v1 non-goals
 
-Sink SPI, multi-writer process, Schema Registry, outbox starter, Avro codegen, admin UI.
+Sink SPI, multi-writer process, Schema Registry, outbox starter, Avro codegen, product admin UI.

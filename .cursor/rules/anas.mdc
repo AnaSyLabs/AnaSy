@@ -1,5 +1,5 @@
 ---
-description: ANASy invariants. Kafka is the boundary. Sinks are independent consumers. ClickHouse is optional.
+description: ANASy invariants. Kafka is the boundary. Sinks are independent consumers. ClickHouse and DuckDB are optional.
 alwaysApply: true
 ---
 
@@ -7,7 +7,7 @@ alwaysApply: true
 
 Fat events: OLTP → `EventPublisher` (`publish` / `publishAndWait`) → Kafka → N sinks (one consumer group each).
 
-Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/sinks/clickhouse.md`.
+Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/sinks/clickhouse.md`. DuckDB: `docs/sinks/duckdb.md`.
 
 - Core module is `event-connector-starter` only.
 - New warehouse = new app under `sinks/` with a unique `group-id`. No SPI.
@@ -16,3 +16,5 @@ Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/s
 - Failed writes must throw so that group does not commit offsets. Transient → exponential backoff then `{topic}.dlq.{sink}`. Poison (missing key) → immediate DLQ, rest of batch still writes. No `@RetryableTopic`. No shared DLQ.
 - Reuse `spring.kafka.*`. No parallel `anas.kafka` broker config.
 - ClickHouse JDBC, `ReplacingMergeTree`, and `fat_events` stay in the ClickHouse sink.
+- DuckDB JDBC, file path, and `INSERT OR REPLACE` stay in the DuckDB sink.
+- `viewer/` is a demo dashboard, not a sink.

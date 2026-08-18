@@ -1,0 +1,9 @@
+**/target
+**/.next
+**/node_modules
+.git
+.idea
+*.iml
+**/*.duckdb
+**/*.duckdb.wal
+viewer/.next

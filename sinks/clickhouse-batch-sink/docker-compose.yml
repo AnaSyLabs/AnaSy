@@ -1,7 +1,12 @@
-# Overlay: docker compose -f docker-compose.yml -f sinks/clickhouse-batch-sink/docker-compose.yml up
+# Overlay: docker compose -f docker-compose.yml -f sinks/clickhouse-batch-sink/docker-compose.yml up -d
+# Paths are relative to the repo root (first -f file).
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.12
     ports: ["8123:8123", "9000:9000"]
+    environment:
+      CLICKHOUSE_DB: anas
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: anas
     volumes:
-      - ../../docs/sinks/clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docs/sinks/clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro

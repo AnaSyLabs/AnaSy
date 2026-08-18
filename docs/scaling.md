@@ -28,7 +28,7 @@ Two warehouses ⇒ two groups, not two partitions.
 ```
 orders.events
   group anas-sink-clickhouse
-  group anas-sink-other
+  group anas-sink-duckdb
 ```
 
 Lag is per group. ClickHouse falling behind does not block the other sink. Scale the slow group; leave the fast one alone.
@@ -98,6 +98,18 @@ GROUP BY partition;
 Thousands of active parts: larger batches or fewer concurrent inserters, not more replicas.
 
 Dedup: `ReplacingMergeTree(ingested_at) ORDER BY (topic, event_date, event_id)`. Queries that need one row use `FINAL` or `argMax`.
+
+## DuckDB (this sink only)
+
+Details: [sinks/duckdb.md](sinks/duckdb.md).
+
+| Setting | Default | Why |
+|---|---|---|
+| Hikari pool | `1` | DuckDB is a single writer |
+| Dedup | `INSERT OR REPLACE` on `event_id` PK | File upsert |
+| `max-poll-records` | `10000` | Same batch idea; drop it if the file is the bottleneck |
+
+Do not open `anas.duckdb` from the viewer. The sink exposes `/internal/*` for reads. A second process on the file will lock or corrupt the WAL.
 
 ## What not to add when it gets busy
 

@@ -34,9 +34,9 @@ Non-trivial logic leaves one runnable check behind — the smallest thing that f
 
 ## ANASy
 
-Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse is one sink.
+Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse and DuckDB are two sinks. `viewer/` is a demo dashboard.
 
-Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sinks/clickhouse.md`.
+Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sinks/clickhouse.md`, `docs/sinks/duckdb.md`.
 
 ### Invariants
 
@@ -44,13 +44,14 @@ Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sin
 - No `sink-spi`, no shared writer interface, no `anas.sink.type`. Fan-out is a new Kafka `group-id`.
 - Producer API is `EventPublisher`. `publish` is non-blocking; `publishAndWait` blocks for broker ack. Do not wrap it.
 - `event_id` is the Kafka key, created in the producer. Sinks never call `UUID.randomUUID()`.
-- The starter does not know ClickHouse. ClickHouse DDL, JDBC, and `ReplacingMergeTree` stay in `sinks/clickhouse-batch-sink`.
+- The starter does not know ClickHouse or DuckDB. Warehouse DDL and JDBC stay in that sink.
 - Failed warehouse writes must throw so that group’s offsets are not committed. Transient: exponential backoff then `{topic}.dlq.{sink}`. Poison (missing key): immediate DLQ, do not stall the rest of the batch.
 - No `@RetryableTopic`. No shared DLQ across sinks. No producer DLQ.
 - Reuse `spring.kafka.*`. Do not invent a parallel broker config tree.
 - Do not add Schema Registry, an outbox, or a common module unless a human asks.
 - No app-wide `anas.publisher.blocking` flag. Blocking vs non-blocking is the method: `publish` vs `publishAndWait`.
+- `viewer/` must not consume as a warehouse. Group `anas-viewer` is display-only.
 
 ### When implementing
 
-Follow `docs/lld.md` for core. Follow `docs/sinks/clickhouse.md` only when touching that sink. If a change fights `docs/PLAN.md`, stop and say so.
+Follow `docs/lld.md` for core. Follow `docs/sinks/clickhouse.md` or `docs/sinks/duckdb.md` only when touching that sink. If a change fights `docs/PLAN.md`, stop and say so.

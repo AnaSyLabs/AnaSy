@@ -18,7 +18,10 @@ OLTP  →  EventPublisher  →  Kafka  →  sink A (own group)
 | Module | Artifact | Layer |
 |---|---|---|
 | Producer starter | `event-connector-starter` | Core. Required. |
-| ClickHouse sink | `clickhouse-batch-sink` | Optional reference sink under `sinks/` |
+| ClickHouse sink | `clickhouse-batch-sink` | Optional warehouse under `sinks/` |
+| DuckDB sink | `duckdb-batch-sink` | Optional warehouse under `sinks/` |
+| Sample OLTP | `examples/starter-example` | Copy this pom. |
+| Local viewer | `viewer/` | Demo dashboard. Not a sink. |
 | Next warehouse | `sinks/<name>` | New Spring Boot app. Own `group-id`. |
 
 No shared `sink-spi`, `SinkWriter`, or `anas.sink.type` switch. Kafka consumer groups are the plugin system.
@@ -54,7 +57,19 @@ These bind `clickhouse-batch-sink`. They do not bind ANASy.
 | `PARTITION BY` | `toYYYYMM(event_date)` |
 | Insert | JDBC `batchUpdate`, 10k–100k rows |
 
-ClickHouse rules and query patterns live in [sinks/clickhouse.md](sinks/clickhouse.md).
+## Locked (DuckDB sink only)
+
+These bind `duckdb-batch-sink`. They do not bind ANASy.
+
+| Topic | Choice |
+|---|---|
+| Store | File `anas.duckdb` |
+| Dedup | `VARCHAR PRIMARY KEY` + `INSERT OR REPLACE` |
+| Pool | Hikari size 1 (single writer) |
+| Viewer reads | HTTP `/internal/*` on the sink (port 8081). Do not open the file from a second process |
+
+DuckDB rules live in [sinks/duckdb.md](sinks/duckdb.md).
+
 
 ## Sink contract (every destination)
 
@@ -68,7 +83,7 @@ A sink is valid if it:
 6. Retries **transient** warehouse failures with exponential backoff, then DLQ
 7. Sends **poison** (missing key, non-retryable) to that sink’s DLQ immediately, without stalling the good rows in the batch
 
-How ClickHouse, Iceberg, or a blob store implements (5) is that sink’s problem.
+How ClickHouse, DuckDB, Iceberg, or a blob store implements (5) is that sink’s problem.
 
 ## Retry and DLQ (locked)
 
@@ -97,8 +112,10 @@ Not infinite retry. A 10-minute warehouse outage DLQs the in-flight batches; rep
 | [hld.md](hld.md) | Architecture, fan-out, Kafka contract |
 | [lld.md](lld.md) | Starter, publisher API, how to add a sink |
 | [scaling.md](scaling.md) | Partitions, groups, per-sink tuning |
-| [sinks/clickhouse.md](sinks/clickhouse.md) | Reference sink: config, code, DDL, queries |
+| [sinks/clickhouse.md](sinks/clickhouse.md) | ClickHouse sink: config, code, DDL, queries |
 | [sinks/clickhouse.sql](sinks/clickhouse.sql) | ClickHouse DDL |
+| [sinks/duckdb.md](sinks/duckdb.md) | DuckDB sink: file store, PK upsert, query port |
+| [sinks/duckdb.sql](sinks/duckdb.sql) | DuckDB DDL |
 | [../AGENTS.md](../AGENTS.md) | Ponytail + ANASy constraints |
 
 No ADR folder. This file is the decision log.
@@ -108,5 +125,6 @@ No ADR folder. This file is the decision log.
 - A sink SPI or multi-writer process
 - Exactly-once (Kafka transactions + warehouse)
 - Parsing JSON in the core (the starter does not know the warehouse)
-- Schema Registry, outbox, admin UI
+- Schema Registry, outbox
+- A product admin / ops control plane. Local `viewer/` is a demo dashboard (where is this `event_id`), not a sink and not a control plane
 - An app-wide `anas.publisher.blocking` switch (the method is the switch)
