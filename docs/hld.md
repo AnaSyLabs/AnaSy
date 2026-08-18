@@ -8,7 +8,7 @@ Decisions: [PLAN.md](PLAN.md). Core implementation: [lld.md](lld.md). Warehouses
 
 OLTP services that join five tables to serve a dashboard become slow and coupled to reporting. Fat events — the business row plus every join reporting needs — belong on a bus, not in the request path.
 
-ANASy is that pipe: a producer starter and a Kafka contract. It is not a warehouse, not CDC, and not a query layer.
+ANASy is that pipe: a producer starter and a Kafka contract. It is not a warehouse, not CDC, and not a query layer. `viewer/` is a local dashboard only.
 
 ## Containers
 

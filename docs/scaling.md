@@ -1,6 +1,6 @@
 # ANASy scaling
 
-Tune Kafka first. Then tune each sink on its own. A ClickHouse batch size is not a Snowflake batch size.
+Tune Kafka first. Then tune each sink on its own. A ClickHouse batch size is not a DuckDB batch size.
 
 ## Kafka partitions (core)
 

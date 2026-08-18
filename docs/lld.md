@@ -383,15 +383,17 @@ public void consume(List<ConsumerRecord<String, String>> records) {
 
 Create DLQ topics with the same partition count as the source. Produce with the original partition index.
 
-### Adding a second sink
+### Adding another sink
+
+DuckDB is already the second warehouse (`sinks/duckdb-batch-sink`, `group-id: anas-sink-duckdb`). For a third:
 
 1. New module `sinks/<name>`.
 2. New `group-id`.
-3. Batch listener as above.
+3. Copy the batch listener (poison split, then durable write).
 4. Map Kafka fields to that warehouse. Keep `eventId` as the idempotency key.
 5. Document warehouse DDL next to the module, not in this file.
 
-Do not route through ClickHouse. Do not add `if (type == CLICKHOUSE)` in a shared process.
+Do not route through ClickHouse or DuckDB. Do not add `if (type == CLICKHOUSE)` in a shared process.
 
 ---
 

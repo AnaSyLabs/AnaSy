@@ -6,7 +6,7 @@ Locked choices for the framework. Write to these. Do not reopen them without a c
 
 ANASy (Analytics Sync) keeps OLTP services thin. A service writes its business row, builds a fat event (joins already resolved), and publishes it once to Kafka.
 
-Kafka is the product boundary. Sinks are independent Kafka consumers. ClickHouse is one sink, not the architecture.
+Kafka is the product boundary. Sinks are independent Kafka consumers. ClickHouse and DuckDB are two sinks, not the architecture.
 
 ```
 OLTP  →  EventPublisher  →  Kafka  →  sink A (own group)
@@ -38,7 +38,7 @@ No shared `sink-spi`, `SinkWriter`, or `anas.sink.type` switch. Kafka consumer g
 | Producer send | `publish` non-blocking. `publishAndWait` blocking. Caller chooses per call | OLTP stays thin by default. Block only when the request must fail if Kafka did not ack |
 | `event_id` | Created in the producer, used as Kafka key | Every sink can idempotently upsert. Sink-generated UUIDs cannot |
 | Fan-out | One topic, N consumer groups | Native Kafka. Two sinks both see every event |
-| Sink shape | Separate Spring Boot app per destination | No common sink module until a second sink duplicates real code |
+| Sink shape | Separate Spring Boot app per destination | DuckDB copied the ClickHouse listener. Extract a helper only if a third copy hurts |
 | Ack | `listener.ack-mode: batch` after a successful write | Failed write → no commit |
 | Retry | Blocking `ExponentialBackOff` on the sink thread | Keeps the batch together. Pause that partition while the warehouse is sick |
 | DLQ | Kafka topic `{topic}.dlq.{sink-name}` | Per sink. Spring DLT, not a shared queue, not `@RetryableTopic` |
@@ -116,6 +116,7 @@ Not infinite retry. A 10-minute warehouse outage DLQs the in-flight batches; rep
 | [sinks/clickhouse.sql](sinks/clickhouse.sql) | ClickHouse DDL |
 | [sinks/duckdb.md](sinks/duckdb.md) | DuckDB sink: file store, PK upsert, query port |
 | [sinks/duckdb.sql](sinks/duckdb.sql) | DuckDB DDL |
+| [../examples/docker-compose.yml](../examples/docker-compose.yml) | Full local stack: Kafka, both sinks, sample OLTP, viewer |
 | [../AGENTS.md](../AGENTS.md) | Ponytail + ANASy constraints |
 
 No ADR folder. This file is the decision log.
