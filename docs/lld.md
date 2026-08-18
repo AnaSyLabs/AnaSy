@@ -109,13 +109,21 @@ package io.anasy.connector;
 
 public interface EventPublisher {
 
-    /** Publishes with a generated eventId as the Kafka key. */
+    /** Non-blocking. Queues the send and returns. Failures are logged. */
     void publish(String topic, Object payload);
 
-    /** Publishes with a stable eventId. Use this when the caller already has one. */
+    /** Non-blocking with a stable eventId. Use this when the caller already has one. */
     void publish(String topic, String eventId, Object payload);
+
+    /** Blocking. Waits for broker ack. Throws if the send fails or is interrupted. */
+    void publishAndWait(String topic, Object payload);
+
+    /** Blocking with a stable eventId. */
+    void publishAndWait(String topic, String eventId, Object payload);
 }
 ```
+
+`publish` is the default for request paths. `publishAndWait` when the caller must not succeed if Kafka did not accept the record. No app-wide `anas.publisher.blocking` switch — the call site is the switch. Bounded by producer `delivery.timeout.ms`, not a second ANASy timeout. Not an outbox: the DB commit and the Kafka send are still two steps.
 
 ```java
 package io.anasy.connector;
@@ -123,10 +131,13 @@ package io.anasy.connector;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 
 public final class KafkaEventPublisher implements EventPublisher {
 
@@ -151,6 +162,40 @@ public final class KafkaEventPublisher implements EventPublisher {
 
     @Override
     public void publish(String topic, String eventId, Object payload) {
+        send(topic, eventId, payload).whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("anas publish failed topic={} eventId={}", topic, eventId, ex);
+            } else if (properties.isLogSuccess()) {
+                log.debug("anas published topic={} eventId={} offset={}",
+                        topic, eventId, result.getRecordMetadata().offset());
+            }
+        });
+    }
+
+    @Override
+    public void publishAndWait(String topic, Object payload) {
+        publishAndWait(topic, UUID.randomUUID().toString(), payload);
+    }
+
+    @Override
+    public void publishAndWait(String topic, String eventId, Object payload) {
+        try {
+            SendResult<String, String> result = send(topic, eventId, payload).get();
+            if (properties.isLogSuccess()) {
+                log.debug("anas published topic={} eventId={} offset={}",
+                        topic, eventId, result.getRecordMetadata().offset());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "anas publish interrupted topic=%s eventId=%s".formatted(topic, eventId), e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException(
+                    "anas publish failed topic=%s eventId=%s".formatted(topic, eventId), e.getCause());
+        }
+    }
+
+    private CompletableFuture<SendResult<String, String>> send(String topic, String eventId, Object payload) {
         if (topic == null || topic.isBlank()) {
             throw new IllegalArgumentException("topic is required");
         }
@@ -163,15 +208,7 @@ public final class KafkaEventPublisher implements EventPublisher {
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("payload is not JSON-serializable", e);
         }
-        ProducerRecord<String, String> record = new ProducerRecord<>(topic, eventId, json);
-        kafka.send(record).whenComplete((result, ex) -> {
-            if (ex != null) {
-                log.error("anas publish failed topic={} eventId={}", topic, eventId, ex);
-            } else if (properties.isLogSuccess()) {
-                log.debug("anas published topic={} eventId={} offset={}",
-                        topic, eventId, result.getRecordMetadata().offset());
-            }
-        });
+        return kafka.send(new ProducerRecord<>(topic, eventId, json));
     }
 }
 ```
@@ -198,7 +235,7 @@ public class OrderService {
 }
 ```
 
-Prefer a stable business id as `eventId` when one insert maps to one event. Generate a UUID when the same aggregate emits many events.
+Prefer a stable business id as `eventId` when one insert maps to one event. Generate a UUID when the same aggregate emits many events. Same arguments on `publishAndWait` when the request must fail if Kafka did not ack.
 
 Avro: set `spring.kafka.producer.value-serializer` and inject `KafkaTemplate<String, ?>`. Do not add an Avro module until a service needs it.
 
@@ -362,6 +399,6 @@ Do not route through ClickHouse. Do not add `if (type == CLICKHOUSE)` in a share
 
 ## Tests that earn their keep
 
-One check in the starter: `KafkaEventPublisher` writes a `ProducerRecord` whose key is the given `eventId` and whose value is JSON. Fail if a key is generated when an id was passed.
+One check in the starter: `KafkaEventPublisher` writes a `ProducerRecord` whose key is the given `eventId` and whose value is JSON. Fail if a key is generated when an id was passed. Same key/value for `publish` and `publishAndWait`. Blocking path throws when `send` fails.
 
 Each sink: write binds `event_id` from `record.key()`. A null key is sent to DLQ and does not prevent the rest of the batch from writing. ClickHouse’s check lives with that module.

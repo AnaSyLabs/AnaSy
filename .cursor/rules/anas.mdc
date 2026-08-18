@@ -5,7 +5,7 @@ alwaysApply: true
 
 # ANASy
 
-Fat events: OLTP → `EventPublisher` → Kafka → N sinks (one consumer group each).
+Fat events: OLTP → `EventPublisher` (`publish` / `publishAndWait`) → Kafka → N sinks (one consumer group each).
 
 Locked decisions: `docs/PLAN.md`. Core shape: `docs/lld.md`. ClickHouse: `docs/sinks/clickhouse.md`.
 

@@ -63,8 +63,9 @@ sequenceDiagram
 
   S->>S: persist business row
   S->>S: build fat event
-  S->>P: publish(topic, eventId, payload)
+  S->>P: publish or publishAndWait(topic, eventId, payload)
   P->>K: ProducerRecord(key=eventId, value=JSON)
+  Note over S,P: publish returns after queueing. publishAndWait waits for broker ack.
   par independent consumers
     K->>A: poll batch
     A->>A: durable write
@@ -110,7 +111,7 @@ No envelope JSON. No ClickHouse column names in the producer. Producer generates
 
 | Boundary | Rule |
 |---|---|
-| OLTP → Kafka | Fire-and-forget with a failure callback. A send failure is logged, not dropped. |
+| OLTP → Kafka | `publish`: fire-and-forget, log send failures. `publishAndWait`: block until broker ack, throw on failure. Neither is transactional with the DB write. |
 | Kafka → each sink | At-least-once per consumer group. Batch ack only after a successful write. |
 | Sink → warehouse | Transient: exponential backoff (1s × 2, cap 60s, 8 attempts), then that sink’s DLQ. |
 | Poison records | Missing key / non-retryable → `{topic}.dlq.{sink}` immediately. Good rows in the same batch still write. |

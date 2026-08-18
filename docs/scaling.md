@@ -17,6 +17,8 @@ Raise partitions before you add instances. Instances in the same sink reuse that
 
 Producer `enable.idempotence: true` and `acks: all` stop duplicate *sends*. They do not stop duplicate *consumes*. Each sink dedups with `eventId`.
 
+`publish` does not add Kafka RTT to the OLTP request. `publishAndWait` does — it waits for broker ack, bounded by `delivery.timeout.ms`. Use it on paths that must fail closed, not as a throughput lever.
+
 Fat payloads need `max.partition.fetch.bytes` large enough for one record. If a record exceeds it, the poll hangs — shrink the event or raise the cap. Set this on each sink; the starter does not consume.
 
 ## Fan-out

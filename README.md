@@ -36,7 +36,7 @@ Java 21, Spring Boot 3.4, Maven. Group `io.anasy`.
 ## Quick path
 
 1. Run Kafka. Depend on `event-connector-starter`.
-2. Publish:
+2. Publish (non-blocking). Use `publishAndWait` when the caller must see the broker ack:
 
 ```java
 events.publish("orders.events", order.id().toString(), fatEvent);

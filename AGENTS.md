@@ -42,13 +42,14 @@ Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/sin
 
 - Core module: `event-connector-starter` only. Sinks live under `sinks/` and do not depend on each other.
 - No `sink-spi`, no shared writer interface, no `anas.sink.type`. Fan-out is a new Kafka `group-id`.
-- Producer API is `EventPublisher`. Do not wrap it.
+- Producer API is `EventPublisher`. `publish` is non-blocking; `publishAndWait` blocks for broker ack. Do not wrap it.
 - `event_id` is the Kafka key, created in the producer. Sinks never call `UUID.randomUUID()`.
 - The starter does not know ClickHouse. ClickHouse DDL, JDBC, and `ReplacingMergeTree` stay in `sinks/clickhouse-batch-sink`.
 - Failed warehouse writes must throw so that group’s offsets are not committed. Transient: exponential backoff then `{topic}.dlq.{sink}`. Poison (missing key): immediate DLQ, do not stall the rest of the batch.
 - No `@RetryableTopic`. No shared DLQ across sinks. No producer DLQ.
 - Reuse `spring.kafka.*`. Do not invent a parallel broker config tree.
 - Do not add Schema Registry, an outbox, or a common module unless a human asks.
+- No app-wide `anas.publisher.blocking` flag. Blocking vs non-blocking is the method: `publish` vs `publishAndWait`.
 
 ### When implementing
 

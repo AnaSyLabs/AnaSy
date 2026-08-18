@@ -32,6 +32,7 @@ No shared `sink-spi`, `SinkWriter`, or `anas.sink.type` switch. Kafka consumer g
 | Build | Maven parent `anas` | Starter convention |
 | Serialization | JSON via Jackson. Avro = swap `value-serializer` | No custom Avro stack |
 | Envelope | None. Kafka key = `eventId`, timestamp = event time, value = fat JSON | One less wrapper; sinks do not share a DTO |
+| Producer send | `publish` non-blocking. `publishAndWait` blocking. Caller chooses per call | OLTP stays thin by default. Block only when the request must fail if Kafka did not ack |
 | `event_id` | Created in the producer, used as Kafka key | Every sink can idempotently upsert. Sink-generated UUIDs cannot |
 | Fan-out | One topic, N consumer groups | Native Kafka. Two sinks both see every event |
 | Sink shape | Separate Spring Boot app per destination | No common sink module until a second sink duplicates real code |
@@ -84,7 +85,7 @@ How ClickHouse, Iceberg, or a blob store implements (5) is that sink’s problem
 | DLQ key | Original `eventId` | Idempotent replay |
 | After DLQ | `commitRecovered=true` | Do not loop the poison |
 | Replay | Republish to the **original** topic with the original key | Normal sink path + warehouse dedup. No replay service |
-| Producer | Kafka `retries` + idempotent producer only | DLQ is a sink concern |
+| Producer | Kafka `retries` + idempotent producer only | DLQ is a sink concern. Blocking publish throws to the OLTP caller; it is not a producer DLQ |
 | `max.poll.interval.ms` | ≥ backoff budget + insert time (10 min) | Default 5 min can kick the consumer mid-backoff |
 
 Not infinite retry. A 10-minute warehouse outage DLQs the in-flight batches; replay after it is healthy. A partition that retries forever is a silent outage.
@@ -108,3 +109,4 @@ No ADR folder. This file is the decision log.
 - Exactly-once (Kafka transactions + warehouse)
 - Parsing JSON in the core (the starter does not know the warehouse)
 - Schema Registry, outbox, admin UI
+- An app-wide `anas.publisher.blocking` switch (the method is the switch)
