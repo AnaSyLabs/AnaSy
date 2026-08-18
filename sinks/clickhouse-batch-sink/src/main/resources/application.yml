@@ -1,0 +1,39 @@
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: anas-sink-clickhouse
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      max-poll-records: 10000
+      fetch-min-size: 1MB
+      fetch-max-wait: 500ms
+      properties:
+        max.partition.fetch.bytes: 10485760
+        max.poll.interval.ms: 600000
+    listener:
+      type: batch
+      ack-mode: batch
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  datasource:
+    url: jdbc:clickhouse:http://localhost:8123/anas
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+    hikari:
+      maximum-pool-size: 4
+      connection-timeout: 10000
+
+anas:
+  sink:
+    name: clickhouse
+    topics: orders.events,payments.events
+    retry:
+      initial-interval: 1s
+      multiplier: 2.0
+      max-interval: 60s
+      max-attempts: 8
+    dlq:
+      suffix: .dlq.clickhouse

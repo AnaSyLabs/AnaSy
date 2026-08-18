@@ -1,0 +1,7 @@
+# Overlay: docker compose -f docker-compose.yml -f sinks/clickhouse-batch-sink/docker-compose.yml up
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    ports: ["8123:8123", "9000:9000"]
+    volumes:
+      - ../../docs/sinks/clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
