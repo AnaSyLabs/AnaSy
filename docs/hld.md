@@ -52,7 +52,7 @@ flowchart LR
 | Kafka | Core | Buffer, replay, fan-out | Transform payloads |
 | `clickhouse-batch-sink` | Sink | Batch-insert into ClickHouse | Speak for DuckDB |
 | `duckdb-batch-sink` | Sink | Upsert into a DuckDB file | Speak for ClickHouse |
-| `viewer/` | Demo UI | Show where an `event_id` is | Not a warehouse, not a control plane |
+| `viewer/` | Demo UI | Show where an `event_id` is; optional ClickHouse silver/gold DSL | Not a warehouse, not a control plane |
 | Next sink | Sink | Same contract, own `group-id` | Share a process or SPI |
 
 Two sinks on the same topic both receive every event because they use different consumer groups. That is the whole fan-out design.

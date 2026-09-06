@@ -34,7 +34,7 @@ Non-trivial logic leaves one runnable check behind — the smallest thing that f
 
 ## ANASy
 
-Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse and DuckDB are two sinks. `viewer/` is a demo dashboard.
+Analytics Sync. Fat events leave OLTP via Kafka. Warehouses are independent consumers. ClickHouse and DuckDB are two sinks. `viewer/` is a demo dashboard (event lookup + optional ClickHouse medallion DSL). It must not become a warehouse.
 
 Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/medallion.md`, `docs/sinks/clickhouse.md`, `docs/sinks/duckdb.md`.
 
@@ -50,7 +50,7 @@ Docs: `docs/PLAN.md`, `docs/hld.md`, `docs/lld.md`, `docs/scaling.md`, `docs/med
 - Reuse `spring.kafka.*`. Do not invent a parallel broker config tree.
 - Do not add Schema Registry, an outbox, or a common module unless a human asks.
 - No app-wide `anas.publisher.blocking` flag. Blocking vs non-blocking is the method: `publish` vs `publishAndWait`.
-- `viewer/` must not consume as a warehouse. Group `anas-viewer` is display-only.
+- `viewer/` must not consume as a warehouse. Group `anas-viewer` is display-only. Medallion promote talks to ClickHouse HTTP only; it does not add a sink `group-id`.
 
 ### When implementing
 

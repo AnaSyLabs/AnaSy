@@ -22,7 +22,7 @@ Kafka is the product boundary. ClickHouse and DuckDB are reference sinks, not th
 | `examples/starter-example` | Sample OLTP app. Copy this pom. |
 | `sinks/clickhouse-batch-sink` | Optional. Batch JDBC into ClickHouse. |
 | `sinks/duckdb-batch-sink` | Optional. Upsert into a DuckDB file. |
-| `viewer/` | Demo dashboard. Where is this event. |
+| `viewer/` | Demo dashboard. Event lookup + ClickHouse medallion DSL. |
 
 Java 21, Spring Boot 3.4, Maven. Group `io.anasy`. Viewer is Next.js.
 
@@ -34,7 +34,7 @@ Java 21, Spring Boot 3.4, Maven. Group `io.anasy`. Viewer is Next.js.
 | [docs/hld.md](docs/hld.md) | Architecture, fan-out |
 | [docs/lld.md](docs/lld.md) | Starter, publisher, how to add a sink |
 | [docs/scaling.md](docs/scaling.md) | Partitions, groups, per-sink tuning |
-| [docs/medallion.md](docs/medallion.md) | Bronze now; silver/gold when a query is hot |
+| [docs/medallion.md](docs/medallion.md) | Bronze → silver → gold; viewer DSL + promote API |
 | [docs/sinks/clickhouse.md](docs/sinks/clickhouse.md) | ClickHouse config, schema, queries |
 | [docs/sinks/duckdb.md](docs/sinks/duckdb.md) | DuckDB file store, PK upsert |
 | [AGENTS.md](AGENTS.md) | Agent rules |
@@ -53,6 +53,14 @@ Open [http://localhost:3000](http://localhost:3000). Publish from the viewer, or
 curl -s -X POST http://localhost:8080/orders \
   -H 'Content-Type: application/json' \
   -d '{"customerName":"Ada","totalAmount":42.5}'
+```
+
+Medallion (ClickHouse only): scroll to **Medallion** on the viewer, edit the DSL, then **Promote all**. That creates silver/gold tables + MVs and backfills from bronze. Gold charts export as SVG or an iframe at `/widgets/{table}`. Details: [docs/medallion.md](docs/medallion.md).
+
+```bash
+curl -s -X POST http://localhost:3000/api/medallion/promote \
+  -H 'Content-Type: application/json' \
+  -d '{"tier":"all","backfill":true,"dsl":"silver silver_orders from orders.events\n  customer:String = customerName\n  amount:Float64 = totalAmount\n\ngold gold_orders_daily from silver_orders\n  group event_date\n  orders:count\n  revenue:sum(amount)\n"}'
 ```
 
 Host-only Kafka (no warehouses): `docker compose up -d` at the repo root.

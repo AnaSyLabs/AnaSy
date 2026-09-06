@@ -227,7 +227,7 @@ WHERE topic = 'orders.events'
 GROUP BY event_id;
 ```
 
-Hot aggregations: incremental MV, added when a query is actually hot.
+Hot aggregations: incremental MV, added when a query is actually hot. Or define silver/gold from the viewer DSL — see [../medallion.md](../medallion.md).
 
 ```sql
 ALTER TABLE anas.fat_events

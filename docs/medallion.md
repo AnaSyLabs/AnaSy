@@ -1,8 +1,6 @@
 # Medallion plan
 
-Planning only. Do not build silver or gold until a query is actually hot.
-
-ANASy is the pipe. Medallion is a **ClickHouse modeling** layout on top of that pipe. It does not change the starter, the Kafka contract, or the sink SPI rule.
+ANASy is the pipe. Medallion is a **ClickHouse modeling** layout on top of that pipe. It does not change the starter, the Kafka contract, or the sink SPI rule. Silver/gold DDL can be applied from the local viewer DSL when you promote; there is still no medallion Maven module.
 
 Decisions that stay locked: [PLAN.md](PLAN.md). Bronze DDL: [sinks/clickhouse.sql](sinks/clickhouse.sql). Query patterns today: [sinks/clickhouse.md](sinks/clickhouse.md).
 
@@ -155,6 +153,35 @@ Query gold with `countMerge` / `sumMerge`. Keep bronze for ad-hoc and for replay
 | A dashboard aggregation is hot | Gold rollup + incremental MV. |
 
 No new Maven module for medallion. DDL lives next to the ClickHouse sink (`docs/sinks/` or a later `docs/sinks/clickhouse-silver.sql`) when something ships.
+
+## Viewer DSL (optional)
+
+The local `viewer/` can apply silver/gold DDL to ClickHouse without a new sink. Still ClickHouse-only; DuckDB stays bronze. No second Kafka consumer.
+
+Syntax:
+
+```
+silver silver_orders from orders.events
+  customer:String = customerName
+  amount:Float64 = totalAmount
+
+gold gold_orders_daily from silver_orders
+  group event_date
+  orders:count
+  revenue:sum(amount)
+```
+
+Field types: `String`, `Float64`, `Int64`, `DateTime`, `UUID`, `Bool` (mapped to `JSONExtract*`). Gold metrics: `count`, `sum(col)`, `avg(col)`.
+
+| Endpoint | Role |
+|---|---|
+| `POST /api/medallion/parse` | Validate DSL only |
+| `POST /api/medallion/promote` | Body `{ dsl, tier?: "silver"\|"gold"\|"all", backfill?: true }` — table + incremental MV, then one `INSERT SELECT`. Gold truncates before backfill (AggregatingMergeTree is not idempotent). |
+| `GET /api/medallion/status` | Bronze / silver / gold row counts |
+| `GET /api/medallion/gold?table=&dsl=` | Query gold with `*Merge` for chart widgets |
+| `/widgets/{table}` | Embeddable gold chart (export SVG / iframe) |
+
+Silver MVs fire on bronze inserts. ClickHouse does not cascade MV→MV, so after new silver rows land, hit **Silver → gold** (or `tier: "gold"`) to refresh rollups. Code: `viewer/lib/medallion.ts`.
 
 ## Checks (when a tier ships)
 
