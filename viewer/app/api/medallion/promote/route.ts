@@ -41,14 +41,14 @@ export async function POST(req: Request) {
 
     if (tier === "gold" || tier === "all") {
       for (const g of spec.gold) {
-        const ddl = goldDdl(g);
+        const ddl = goldDdl(g, spec.silver);
         const steps: string[] = [];
         await exec(ddl.tableSql);
         steps.push("table");
         await exec(ddl.mvSql);
         steps.push("mv");
         if (backfill) {
-          // AggregatingMergeTree backfill is not idempotent — clear then load.
+          // Not idempotent, so clear first. Reads silver FINAL, which also drops redelivered duplicates.
           await exec(`TRUNCATE TABLE IF EXISTS anas.${g.table}`);
           await exec(ddl.backfillSql);
           steps.push("backfill");

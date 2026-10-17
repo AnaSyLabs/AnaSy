@@ -181,7 +181,9 @@ Field types: `String`, `Float64`, `Int64`, `DateTime`, `UUID`, `Bool` (mapped to
 | `GET /api/medallion/gold?table=&dsl=` | Query gold with `*Merge` for chart widgets |
 | `/widgets/{table}` | Embeddable gold chart (export SVG / iframe) |
 
-Silver MVs fire on bronze inserts. ClickHouse does not cascade MV→MV, so after new silver rows land, hit **Silver → gold** (or `tier: "gold"`) to refresh rollups. Code: `viewer/lib/medallion.ts`.
+Silver MVs fire on bronze inserts, and gold MVs fire on silver inserts (ClickHouse cascades MVs; checked on 24.8). New events reach gold without a manual step.
+
+**Redelivery overcounts live gold.** Delivery is at-least-once. A redelivered event is collapsed in silver by `ReplacingMergeTree`, but only at merge time, and the gold MV has already counted it (measured: one event sent twice gave `count 2, sum 20` in gold and one row in `silver FINAL`). Hit **Silver → gold** (or `tier: "gold"`) to reconcile: it truncates gold and rebuilds it from `silver FINAL`. Gold group columns take the type of the silver column they name. A group or metric column that silver does not define is rejected. Code: `viewer/lib/medallion.ts`.
 
 ## Checks (when a tier ships)
 

@@ -202,8 +202,25 @@ WHERE topic = '${spec.topic.replace(/'/g, "\\'")}'
   return { tableSql, mvSql, backfillSql };
 }
 
-export function goldDdl(spec: GoldSpec): { tableSql: string; mvSql: string; backfillSql: string; querySql: string } {
-  const groupCols = spec.groupBy.map((c) => `    ${c} ${c === "event_date" ? "Date" : "String"}`).join(",\n");
+const BASE_COLUMNS: Record<string, string> = { event_id: "UUID", event_date: "Date", event_ts: "DateTime" };
+
+/** Column types of the gold source. Unknown when the source is not defined in the same DSL. */
+function sourceColumns(spec: GoldSpec, silver: SilverSpec[]): Record<string, string> | null {
+  const src = silver.find((s) => s.table === spec.from);
+  if (!src) return null;
+  return { ...BASE_COLUMNS, ...Object.fromEntries(src.fields.map((f) => [f.name, f.type])) };
+}
+
+export function goldDdl(
+  spec: GoldSpec,
+  silver: SilverSpec[] = [],
+): { tableSql: string; mvSql: string; backfillSql: string; querySql: string } {
+  const known = sourceColumns(spec, silver);
+  const used = [...spec.groupBy, ...spec.metrics.flatMap((m) => ("column" in m ? [m.column] : []))];
+  for (const c of used) {
+    if (known && !(c in known)) throw new Error(`gold ${spec.table}: '${c}' is not a column of ${spec.from}`);
+  }
+  const groupCols = spec.groupBy.map((c) => `    ${c} ${known?.[c] ?? BASE_COLUMNS[c] ?? "String"}`).join(",\n");
   const metricCols = spec.metrics
     .map((m) => {
       if (m.fn === "count") return `    ${m.name} AggregateFunction(count)`;
@@ -244,7 +261,7 @@ INSERT INTO anas.${spec.table}
 SELECT
     ${spec.groupBy.join(", ")},
 ${states}
-FROM anas.${spec.from}
+FROM anas.${spec.from} FINAL
 GROUP BY ${spec.groupBy.join(", ")}
 `.trim();
 

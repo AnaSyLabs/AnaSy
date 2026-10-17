@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     let groupBy: string[] = [];
 
     if (gold) {
-      const ddl = goldDdl(gold);
+      const ddl = goldDdl(gold, spec.silver);
       querySql = ddl.querySql;
       metrics = gold.metrics.map((m) => m.name);
       groupBy = gold.groupBy;
