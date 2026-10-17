@@ -32,7 +32,7 @@ class ClickHouseSinkListenerTest {
         ConsumerRecord<String, String> poison =
                 new ConsumerRecord<>("orders.events", 0, 1L, (String) null, "{\"ok\":false}");
         ConsumerRecord<String, String> good =
-                new ConsumerRecord<>("orders.events", 0, 2L, "evt-1", "{\"ok\":true}");
+                new ConsumerRecord<>("orders.events", 0, 2L, "11111111-1111-1111-1111-111111111111", "{\"ok\":true}");
 
         listener.consume(List.of(poison, good));
 
@@ -41,7 +41,7 @@ class ClickHouseSinkListenerTest {
         assertInstanceOf(PoisonEventException.class, dlq.exceptions.getFirst());
 
         assertEquals(1, jdbc.batch.size());
-        assertEquals("evt-1", jdbc.batch.iterator().next().key());
+        assertEquals("11111111-1111-1111-1111-111111111111", jdbc.batch.iterator().next().key());
 
         AtomicReference<String> boundId = new AtomicReference<>();
         PreparedStatement ps = (PreparedStatement) Proxy.newProxyInstance(
@@ -70,7 +70,18 @@ class ClickHouseSinkListenerTest {
                     return 0;
                 });
         jdbc.setter.setValues(ps, good);
-        assertEquals("evt-1", boundId.get());
+        assertEquals("11111111-1111-1111-1111-111111111111", boundId.get());
+    }
+
+    @Test
+    void nonUuidKeyIsPoisonButTheRestOfTheBatchIsWritten() {
+        var bad = new ConsumerRecord<>("orders.events", 0, 1L, "order-42", "{}");
+        var good = new ConsumerRecord<>("orders.events", 0, 2L, "11111111-1111-1111-1111-111111111111", "{}");
+
+        listener.consume(List.of(bad, good));
+
+        assertEquals(List.of(bad), dlq.recovered);
+        assertEquals(1, jdbc.batch.size());
     }
 
     @Test

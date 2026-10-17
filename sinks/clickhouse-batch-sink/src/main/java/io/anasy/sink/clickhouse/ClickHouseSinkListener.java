@@ -4,6 +4,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -31,9 +32,9 @@ public class ClickHouseSinkListener {
     public void consume(List<ConsumerRecord<String, String>> records) {
         List<ConsumerRecord<String, String>> good = new ArrayList<>();
         for (var rec : records) {
-            if (rec.key() == null || rec.key().isBlank()) {
+            if (!isUuid(rec.key())) {
                 dlq.accept(rec, new PoisonEventException(
-                        "missing eventId topic=%s partition=%d offset=%d"
+                        "eventId is not a UUID topic=%s partition=%d offset=%d"
                                 .formatted(rec.topic(), rec.partition(), rec.offset())));
                 continue;
             }
@@ -50,5 +51,17 @@ public class ClickHouseSinkListener {
             ps.setTimestamp(5, Timestamp.from(Instant.ofEpochMilli(rec.timestamp())));
             ps.setString(6, rec.value() == null ? "" : rec.value());
         });
+    }
+
+    /** event_id is a ClickHouse UUID column; one bad key would otherwise fail and retry the whole batch. */
+    private static boolean isUuid(String key) {
+        if (key == null) {
+            return false;
+        }
+        try {
+            return UUID.fromString(key).toString().equalsIgnoreCase(key);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 }

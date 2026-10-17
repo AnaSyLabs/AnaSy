@@ -64,9 +64,9 @@ public class ClickHouseSinkListener {
     public void consume(List<ConsumerRecord<String, String>> records) {
         List<ConsumerRecord<String, String>> good = new ArrayList<>();
         for (var rec : records) {
-            if (rec.key() == null || rec.key().isBlank()) {
+            if (!isUuid(rec.key())) {
                 dlq.accept(rec, new PoisonEventException(
-                        "missing eventId topic=%s partition=%d offset=%d"
+                        "eventId is not a UUID topic=%s partition=%d offset=%d"
                                 .formatted(rec.topic(), rec.partition(), rec.offset())));
                 continue;
             }
@@ -87,7 +87,7 @@ public class ClickHouseSinkListener {
 }
 ```
 
-Poison keys go to DLQ via `DeadLetterPublishingRecoverer`; they never hit JDBC. `event_date` is `DEFAULT toDate(event_ts)`. `ingested_at` is `DEFAULT now()`. Neither is bound in JDBC.
+Poison keys (missing, or not a UUID, since `event_id` is a ClickHouse `UUID` column and one bad key would fail and retry the whole batch) go to DLQ via `DeadLetterPublishingRecoverer`; they never hit JDBC. `isUuid` is a small private helper in `ClickHouseSinkListener`. `event_date` is `DEFAULT toDate(event_ts)`. `ingested_at` is `DEFAULT now()`. Neither is bound in JDBC.
 
 ## `application.yml`
 
